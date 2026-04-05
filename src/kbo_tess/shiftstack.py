@@ -90,6 +90,73 @@ def _sample_shifted_frame(
     raise ValueError(f"Unknown interpolation mode {interpolation!r}.")
 
 
+def stack_with_support(
+    cube: Any,
+    x: Iterable[float],
+    y: Iterable[float],
+    method: str = "mean",
+    interpolation: str = "nearest",
+    reference: tuple[float, float] | None = None,
+    integer_shifts: bool = False,
+) -> dict[str, Any]:
+    """Align a cube to a track and return the stack plus coverage diagnostics.
+
+    The source position is expressed in image coordinates `(x, y)` while the
+    shift library operates in array-axis order `(dy, dx)`. This helper keeps the
+    bookkeeping explicit so alignment audits can inspect the requested shifts.
+    """
+
+    numpy = _require_numpy()
+    cube_array, x_array, y_array = _validate_inputs(cube, x, y)
+    ref_x, ref_y = reference if reference is not None else (float(x_array[0]), float(y_array[0]))
+
+    aligned_frames = numpy.empty_like(cube_array, dtype=float)
+    shift_rows: list[dict[str, float]] = []
+    for index, frame in enumerate(cube_array):
+        requested_shift_x = ref_x - float(x_array[index])
+        requested_shift_y = ref_y - float(y_array[index])
+        applied_shift_x = float(round(requested_shift_x)) if integer_shifts else float(requested_shift_x)
+        applied_shift_y = float(round(requested_shift_y)) if integer_shifts else float(requested_shift_y)
+        aligned_frames[index] = _sample_shifted_frame(frame, applied_shift_x, applied_shift_y, interpolation)
+        shift_rows.append(
+            {
+                "frame_index": float(index),
+                "source_x": float(x_array[index]),
+                "source_y": float(y_array[index]),
+                "reference_x": float(ref_x),
+                "reference_y": float(ref_y),
+                "requested_shift_x": float(requested_shift_x),
+                "requested_shift_y": float(requested_shift_y),
+                "applied_shift_x": float(applied_shift_x),
+                "applied_shift_y": float(applied_shift_y),
+                "applied_axis0_shift": float(applied_shift_y),
+                "applied_axis1_shift": float(applied_shift_x),
+            }
+        )
+
+    support_map = numpy.sum(numpy.isfinite(aligned_frames), axis=0).astype(float)
+    fractional_support = support_map / float(aligned_frames.shape[0])
+    if method == "mean":
+        summed = numpy.nansum(aligned_frames, axis=0)
+        stacked = numpy.full(aligned_frames.shape[1:], numpy.nan, dtype=float)
+        numpy.divide(summed, support_map, out=stacked, where=support_map > 0)
+    elif method == "sum":
+        stacked = numpy.nansum(aligned_frames, axis=0)
+    elif method == "median":
+        stacked = numpy.nanmedian(aligned_frames, axis=0)
+    else:
+        raise ValueError(f"Unknown stack method {method!r}. Choose 'mean', 'sum', or 'median'.")
+
+    return {
+        "stack": stacked,
+        "aligned_frames": aligned_frames,
+        "support_map": support_map,
+        "fractional_support": fractional_support,
+        "reference": (float(ref_x), float(ref_y)),
+        "shift_rows": shift_rows,
+    }
+
+
 def stack_along_track(
     cube: Any,
     x: Iterable[float],
@@ -100,27 +167,15 @@ def stack_along_track(
 ) -> Any:
     """Shift frames so a known detector-local track lands on a common reference pixel."""
 
-    numpy = _require_numpy()
-    cube_array, x_array, y_array = _validate_inputs(cube, x, y)
-    ref_x, ref_y = reference if reference is not None else (float(x_array[0]), float(y_array[0]))
-
-    aligned_frames = numpy.empty_like(cube_array, dtype=float)
-    for index, frame in enumerate(cube_array):
-        shift_x = ref_x - float(x_array[index])
-        shift_y = ref_y - float(y_array[index])
-        aligned_frames[index] = _sample_shifted_frame(frame, shift_x, shift_y, interpolation)
-
-    if method == "mean":
-        valid_counts = numpy.sum(numpy.isfinite(aligned_frames), axis=0)
-        summed = numpy.nansum(aligned_frames, axis=0)
-        stacked = numpy.full(aligned_frames.shape[1:], numpy.nan, dtype=float)
-        numpy.divide(summed, valid_counts, out=stacked, where=valid_counts > 0)
-        return stacked
-    if method == "sum":
-        return numpy.nansum(aligned_frames, axis=0)
-    if method == "median":
-        return numpy.nanmedian(aligned_frames, axis=0)
-    raise ValueError(f"Unknown stack method {method!r}. Choose 'mean', 'sum', or 'median'.")
+    return stack_with_support(
+        cube,
+        x,
+        y,
+        method=method,
+        interpolation=interpolation,
+        reference=reference,
+        integer_shifts=False,
+    )["stack"]
 
 
 def _position_to_index(position: tuple[float, float], shape: tuple[int, int]) -> tuple[int, int]:

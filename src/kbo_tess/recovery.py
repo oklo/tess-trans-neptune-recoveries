@@ -308,17 +308,17 @@ def align_ephemeris_to_cube_bundle(ephem_df: Any, cube_bundle: dict[str, Any]) -
 
 def _resolve_track_coordinates(aligned_ephem: Any) -> tuple[Any, Any, str]:
     numpy = _require_numpy()
-    if {"local_x_from_corner", "local_y_from_corner"}.issubset(aligned_ephem.columns):
-        return (
-            numpy.asarray(aligned_ephem["local_x_from_corner"], dtype=float),
-            numpy.asarray(aligned_ephem["local_y_from_corner"], dtype=float),
-            "cutout_local_from_corner",
-        )
     if {"bundle_local_x", "bundle_local_y"}.issubset(aligned_ephem.columns):
         return (
             numpy.asarray(aligned_ephem["bundle_local_x"], dtype=float),
             numpy.asarray(aligned_ephem["bundle_local_y"], dtype=float),
             "cutout_local_bundle",
+        )
+    if {"local_x_from_corner", "local_y_from_corner"}.issubset(aligned_ephem.columns):
+        return (
+            numpy.asarray(aligned_ephem["local_x_from_corner"], dtype=float),
+            numpy.asarray(aligned_ephem["local_y_from_corner"], dtype=float),
+            "cutout_local_from_corner",
         )
     return (
         numpy.asarray(aligned_ephem["x"], dtype=float),

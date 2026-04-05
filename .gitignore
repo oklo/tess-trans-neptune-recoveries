@@ -11,6 +11,8 @@ build/
 dist/
 *.egg-info/
 
+outputs/
+!outputs/
 outputs/*
 !outputs/.gitkeep
 

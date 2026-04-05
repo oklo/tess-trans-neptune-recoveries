@@ -1,0 +1,149 @@
+Pluto Stack Alignment Audit
+2026-04-05
+
+Debug target and frozen bundle
+- Target: Pluto
+- Detector: Sector 92 / camera 2 / CCD 1
+- Frozen bundle: /Users/greglaughlin/src/kbo-tess/outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+- Timing/loader context: barycentric=true, loader background rolling
+- Core audit context: recovery background none unless otherwise noted
+
+Project/debug overview
+- This pass used Pluto as the bright real-data calibration case for the stack-alignment path.
+- The goal was not to make a Pluto science claim. The goal was to determine whether the current offset behavior comes from the stacker itself, from track/pixel conventions, or from support/interpolation artifacts.
+- Sedna and Pluto both showed a near-nominal offset preference in earlier work, so Pluto was treated as the frozen debug case before returning to Sedna.
+
+Plots inspected or regenerated
+- Existing Pluto calibration products under outputs/pluto_calibration/primary/
+- Regenerated audit products under outputs/pluto_stack_audit/
+- Key new plots:
+  - outputs/pluto_stack_audit/pluto_sector92_cam2_ccd1_stack_audit.png
+  - outputs/pluto_stack_audit/pluto_sector92_cam2_ccd1_stack_offsets.png
+  - outputs/pluto_stack_audit/recovery_none_linear_after_fix/pluto_sector92_diagnostic.png
+  - outputs/pluto_stack_audit/null_controls_none_after_fix/pluto_sector92_cam2_ccd1_null_track_controls.png
+
+What was audited
+- Explicit shift math and axis order
+- Measured-centroid stacking on a bright 32-cadence Pluto subset
+- Integer-shift vs subpixel-shift behavior
+- Contribution/support maps
+- Frame-by-frame nominal vs nearby-offset aperture photometry
+- Real-bundle injections on the frozen Pluto subset
+- Rerun of the public Pluto recovery/null-control path after a small safe recovery change
+
+Shift-formula / axis-order findings
+- The stacker uses the expected image-coordinate shifts:
+  - dx = x_ref - x_i
+  - dy = y_ref - y_i
+- The image sampler is fed shifts in array-axis order:
+  - axis0 shift = dy
+  - axis1 shift = dx
+- This was checked explicitly in code, logged in the audit summary, and guarded by a targeted unit test.
+- Real-bundle nominal injections also land at the intended reference pixel, which argues against a gross sign or axis-order bug in the stacker implementation itself.
+
+Measured-centroid stack result
+- I selected the 32 brightest Pluto cadences by nominal-track moving-aperture S/N for centroid diagnostics.
+- Geometry still passes cleanly on the frozen bundle:
+  - corner residual median/max = 0.00445 / 0.00594 px
+- On this bright subset:
+  - nominal subpixel stack aperture S/N = 18.53
+  - measured-centroid stack aperture S/N = 21.90
+  - nominal track with x offset of -0.5 px gives aperture S/N = 26.08
+- This means the stacker can form a compact source near the intended reference location on real Pluto data.
+- Therefore the stacker is not fundamentally broken in the sense of “cannot align a real moving source at all.”
+
+Integer vs subpixel shift result
+- On the same bright Pluto subset:
+  - nominal subpixel stack aperture S/N = 18.53
+  - nominal integer-shift stack aperture S/N = 11.35
+- Integer shifting behaves worse than the current subpixel path, not better.
+- This argues against subpixel interpolation being the primary root cause.
+- Interpolation/support details still matter, but the main failure does not look like “linear interpolation is fundamentally mis-shifting the source.”
+
+Support-map findings
+- Support maps were generated for the nominal, x-offset, and centroid subset stacks.
+- At the fixed scoring location, support is full for all three variants:
+  - support_at_reference = 32 / 32 frames
+- The bright-source preference on the subset is therefore not caused by missing coverage in the scoring aperture.
+- Global maxima can still appear on edges in some stack visualizations, but those edge peaks are not what drives the fixed-position aperture S/N used for the main comparison here.
+
+Frame-by-frame nominal vs nearby-offset findings
+- Full-bundle frame-by-frame offset photometry does not show a single clean winning offset across all cadences.
+- The exact nominal track wins only 40 / 864 frames.
+- Best offsets are spread broadly around the nominal track, with the most common winners on the full bundle being:
+  - (-0.5, +0.5): 139 frames
+  - (-0.5, -0.5): 126 frames
+  - (+0.5, -0.5): 125 frames
+  - (+0.5, +0.5): 105 frames
+- This means there is not a single simple full-bundle constant offset that explains every cadence.
+- However, on the bright subset the measured centroids show a consistent negative x residual:
+  - median centroid residual = (-0.242, -0.012) px
+  - mean centroid residual = (-0.290, +0.088) px
+- The brightest-subset behavior therefore points to a small x-side track/convention mismatch even though the full bundle is not cleanly described by one constant offset.
+
+Injection findings
+- Injecting a synthetic moving PSF directly into the real Pluto bundle subset works as expected.
+- A nominal-track injection produces a very strong compact stack at the reference location:
+  - injection nominal aperture S/N = 196.46
+  - peak at (10, 10)
+- An injected source offset by +0.5 px in x also behaves physically:
+  - injection offset aperture S/N = 177.03
+  - peak at (10, 10)
+- These injection results strongly support the conclusion that the stacker itself is functioning correctly on real-bundle data.
+
+Public-pipeline rerun after the small safe fix
+- I made one safe recovery-path fix:
+  - when a real cube bundle already provides local_x/local_y, recovery now prefers those exact bundle-local coordinates over re-deriving local coordinates from the interpolated detector track
+- This removes a small avoidable interpolation seam in real-data recovery and changes the reported track coordinate source to cutout_local_bundle.
+- It does not solve the main Pluto behavior by itself.
+- After the fix, the frozen full-bundle Pluto recovery with background none and interpolation linear gives:
+  - nominal score = 2.7999
+  - best local score = 3.9364 at (0.0, +1.0)
+- Null controls remain problematic:
+  - best control score = 3.9364 at (0.0, +1.0)
+  - nominal minus best control = -1.1365
+- So Pluto nominal still does not beat nearby controls cleanly on the full 864-cadence bundle.
+
+Root-cause conclusion
+- The evidence does not support “the stacker implementation itself is wrong.”
+  - Toy axis-order test passes.
+  - Real-bundle injections stack correctly.
+  - Measured-centroid stacking on a bright Pluto subset produces a compact source at the intended location.
+- The strongest primary issue is upstream of the core stacker:
+  - there is a real small x-direction mismatch between the predicted local track and the bright-subset Pluto centroids
+  - on the brightest subset, a simple x = -0.5 px adjustment outperforms both the nominal track and the measured-centroid stack
+- A full symmetric half-pixel convention bug is not proven.
+  - The evidence is stronger for an x-side convention or track mismatch than for a generic +/-0.5 px bug in both axes.
+- A secondary issue remains on the full bundle:
+  - long-run recovery scores are still vulnerable to residual systematics/null-control structure
+  - even after the safe fix, the exact nominal Pluto track does not beat nearby controls cleanly
+
+Whether Pluto nominal now behaves physically
+- On the bright subset: mostly yes
+  - the source is compact at the intended reference location
+  - centroid and x-offset comparisons are physically interpretable
+- On the full 864-cadence bundle: not yet
+  - the nominal track still loses to nearby null controls
+  - the best local offset remains displaced from the exact nominal track
+
+Implications for Sedna
+- It is not yet reasonable to return to Sedna as if the stack-alignment path is fully settled.
+- The audit says the core stacker is usable, which is important progress.
+- But Pluto nominal still does not behave cleanly enough across the full frozen bundle to treat Sedna’s near-nominal offset behavior as purely sensitivity-limited.
+- Sedna should wait until the Pluto nominal or explicitly corrected track beats nearby controls cleanly on the bounded real bundle.
+
+Outputs kept local
+- The new audit PNG/CSV/JSON products under outputs/pluto_stack_audit/ remain local and uncommitted by default.
+- The frozen Pluto bundle and prior Sedna/Pluto output trees remain untracked as publication-safe local artifacts.
+
+Exact code changes made in this pass
+- Added support-aware stacking diagnostics in src/kbo_tess/shiftstack.py
+- Added focused audit helpers in src/kbo_tess/stack_audit.py
+- Added the executable audit entry point scripts/audit_pluto_stack.py
+- Added targeted non-network tests in tests/test_stack_audit.py
+- Updated recovery coordinate selection in src/kbo_tess/recovery.py to prefer exact bundle-local track coordinates when present
+
+Recommended next 3 tasks
+1. Audit the local x-coordinate convention more explicitly at the Pluto bright-subset level, including whether the cutout-local track should be compared to centroid positions, aperture-weighted centers, or a different pixel-center convention.
+2. Add an explicit constant track-offset calibration hook to the recovery driver and test a narrow x-offset sweep around 0 to -0.5 px on the frozen Pluto bundle before changing any science-facing default.
+3. Do not return to Sedna until Pluto’s exact nominal or physically explained corrected track beats nearby null controls cleanly on the bounded real bundle.
