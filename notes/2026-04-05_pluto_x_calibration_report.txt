@@ -1,0 +1,89 @@
+Pluto X-Calibration Report
+2026-04-05
+
+Frozen bundle path
+- /Users/greglaughlin/src/kbo-tess/outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+
+Context
+- This pass stayed on the frozen Pluto debug case established in the prior stack audit:
+  target Pluto, Sector 92, camera 2, CCD 1, barycentric=true, loader background rolling.
+- Geometry already passed cleanly on this bundle, real-bundle injections already showed that the core shift engine is not fundamentally broken, and the next bounded question was whether a constant local x correction could resolve the remaining near-nominal mismatch.
+- Recovery background for the core comparison remained none.
+
+X grid tested
+- 0.00, -0.05, -0.10, -0.15, -0.20, -0.25, -0.30, -0.35, -0.40, -0.45, -0.50 pixels
+- Highlighted prior clues:
+  centroid-informed offset from the bright subset: about -0.242 px
+  coarse audit preference: x - 0.5 px
+
+Subset result
+- The exact 32-frame bright subset from the stack audit was reused unchanged.
+- Best subset x offset from the fine grid: -0.45 px
+- Direct moving-aperture summary also favored -0.45 px on this subset.
+- The subset stack score rose from about 18.53 at exact nominal to about 26.28 at x = -0.45 px.
+- The nearby coarse x - 0.5 px point was almost identical at about 26.08, which is consistent with the earlier audit and suggests a real narrow preference near the negative half-pixel side.
+
+Full frozen-bundle result
+- Full-bundle best x offset from the same fine grid: -0.45 px
+- The direct full-bundle metric was broader and favored about -0.25 px, but the stacked metric again preferred -0.45 px.
+- The exact nominal full-bundle stack score was about 2.80.
+- The calibrated x = -0.45 px full-bundle stack score improved to about 3.10.
+- The subset and full stacked optima agree within 0.10 px, which argues that the negative x preference is not a fluke of only the bright subset.
+
+Null-control comparison
+- After centering the null-control gate on the calibrated x track, the calibrated track still did not beat nearby controls cleanly.
+- Exact nominal score: about 2.80
+- Calibrated-x score: about 3.10
+- Best nearby / outer control score: about 4.08 at delta ( +0.5, +1.0 ) relative to the calibrated track
+- Calibrated minus best control: about -0.98
+- Interpretation: constant x calibration helps, but it is not sufficient to make the full Pluto track behave physically enough for a clean pass.
+
+Cadence-growth comparison
+- A nominal-versus-calibrated cadence ladder was run on the full frozen bundle.
+- Final cumulative scores:
+  nominal about 2.80
+  calibrated about 3.10
+- The calibrated curve was not uniformly better:
+  at intermediate checkpoints (216, 432, 648 frames) the calibrated track was weaker than exact nominal
+  only at the full 864-frame total did calibrated finish slightly above nominal
+- Interpretation: the constant x correction is not producing a clean monotonic or consistently improved growth story. That argues against a pure fixed-convention bug being the whole explanation.
+
+Time dependence / residual behavior
+- Bright-subset centroid residuals remain consistent with the earlier audit:
+  median residual x about -0.242 px
+  median residual y about -0.012 px
+- A sparse full-bundle centroid sample looks much less clean:
+  median residual x about -0.057 px
+  median residual y about +0.164 px
+  residual scatter is large, with sigma_x about 0.72 px and sigma_y about 0.58 px
+- The remaining mismatch is therefore better described as drifting or systematics-dominated rather than approximately constant.
+
+Conclusion
+- A constant local x calibration exists on this frozen Pluto bundle and is consistently near -0.45 px in the stacked metric.
+- That correction improves the exact nominal Pluto track, but it does not make the calibrated full-bundle track beat nearby controls cleanly.
+- Constant x calibration is therefore not enough to close the Pluto debugging loop.
+- Pluto is not yet clean enough to justify returning to Sedna.
+
+Outputs
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_subset_x_sweep.json
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_subset_x_sweep.csv
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_subset_x_sweep.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_subset_x_comparison.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_full_x_sweep.json
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_full_x_sweep.csv
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_full_x_sweep.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_calibrated_null_controls.json
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_calibrated_null_controls.csv
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_calibrated_null_controls.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_nominal_vs_calibrated_growth.csv
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_nominal_vs_calibrated_growth.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_centroid_residuals_vs_time.png
+- outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_x_calibration_summary.json
+
+Implication for the next Pluto pass
+- The next bounded Pluto task should stay on this same frozen bundle and ask whether the residual mismatch is driven by time-dependent local track error, not by a single constant x convention offset.
+
+Next 3 tasks
+1. Measure centroid residuals on a denser but still bounded cadence sample and test whether the offset drifts smoothly with time or correlates with cadence/systematics metadata already present in the cube bundle.
+2. Audit the bundle local-coordinate handoff at the subpixel level over time, especially whether the same local_x/local_y convention is used consistently by tess_asteroids, direct photometry, and the shift-stack reference frame.
+3. Only after Pluto nominal-or-physically-corrected behavior beats nearby controls more cleanly should the workflow return to Sedna.
