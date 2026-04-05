@@ -1,0 +1,225 @@
+Pluto Calibration Report
+2026-04-05
+
+Project context
+
+This pass used Pluto as a bright calibration rung for the existing real-data
+pipeline that was developed around Sedna. The goal was not a polished Pluto
+science result. The goal was to test whether a bright real moving target passes
+the same core gates that matter for Sedna:
+
+- normalized ephemeris CSV -> local NPZ cube bundle
+- geometry consistency
+- direct moving-target signal on the predicted track
+- known-path shift-stack behavior
+- nearby null-control separation
+- sensible cadence-growth behavior
+
+Selected Pluto candidate
+
+The live Pluto inventory found one detector-local opportunity in the current
+mission coverage:
+
+- Sector 92
+- camera 2
+- CCD 1
+- full detector-local daily ephemeris span:
+  3803.500801 -> 3828.500801 in TDB JD-2457000
+- edge margin was very large throughout the detector track
+
+The bounded selector chose:
+
+Primary candidate
+- Sector 92 / camera 2 / CCD 1
+- time span: 3826.500801 -> 3828.500801
+- 3 daily ephemeris support rows
+- selected because it stays comfortably away from detector edges while keeping
+  the first real bundle modest
+
+Backup candidate
+- Sector 92 / camera 2 / CCD 1
+- time span: 3822.500801 -> 3826.500801
+- 5 daily ephemeris support rows
+- retained as the next bounded subset to try if the primary remains ambiguous
+
+Bounded run settings
+
+Primary real-data run:
+- target = Pluto
+- sector/camera/ccd = 92 / 2 / 1
+- cutout shape = 21 x 21
+- bundle builder = tess_asteroids MovingTPF path
+- loader background = rolling
+- primary timing choice tested first = barycentric=true
+- recovery temporal backgrounds tried = none and savgol
+- local offset search radius = 1.0 px
+- local offset step = 0.5 px
+- interpolation = linear
+
+Real bundle result
+
+The primary Pluto bundle built successfully with 864 cadences over the bounded
+2-day window. This confirms that the current normalized ephemeris + cube-bundle
+handoff works on a bright real moving target as well as on Sedna.
+
+Geometry gate
+
+The barycentric=true Pluto geometry check passed cleanly.
+
+Key numbers:
+- corner residual median/max: 0.00445 / 0.00594 px
+- POS_CORR residual median/max: 0.0 / 0.0 px
+- detector residual median/max: 0.00445 / 0.00594 px
+- cadences: 864
+
+This is comfortably within the intended geometry tolerances and is consistent
+with the real-data seam being internally coherent for this Pluto subset.
+
+Timing control
+
+A matching barycentric=false control bundle was also built for the same bounded
+subset.
+
+That control did not pass the geometry path cleanly. The immediate failure mode
+was that the bundle cadence times extended outside the ephemeris span during
+alignment:
+
+- cube time stop: about 3828.502866
+- ephemeris time stop: 3828.500801
+
+For this Pluto subset, barycentric=false was therefore not self-consistent
+enough to treat as a viable recovery path. This supports the same operational
+direction seen in the Sedna work: barycentric=true is currently the better
+working choice for the real-data bundle path.
+
+Direct moving-aperture photometry
+
+Direct moving-aperture photometry was run on the barycentric=true Pluto bundle
+with no additional temporal background subtraction.
+
+Summary:
+- n_frames = 864
+- median net flux = 0.063
+- max net flux = 22.10
+- median aperture S/N = 0.018
+- max aperture S/N = 6.43
+
+Interpretation:
+- the direct moving-target photometry path does register a real positive signal
+  on the predicted local track
+- Pluto is bright enough that some individual cadences are clearly favorable
+- the signal is not uniformly strong cadence by cadence, which is plausible for
+  real TESS detector-local data with varying local background and systematics
+
+Known-path shift-stack recovery
+
+Recovery on the barycentric=true bundle with temporal background = none:
+- nominal score = 2.799
+- best local score = 3.919
+- best offset = (0.0, +1.0) px
+
+Recovery on the barycentric=true bundle with temporal background = savgol:
+- nominal score = 2.838
+- best local score = 4.551
+- best offset = (+0.5, -0.5) px
+
+The savgol run behaved somewhat better than the no-temporal-background run in
+the sense that its best offset stayed in the near-nominal neighborhood rather
+than on the outer ring.
+
+Null-control separation
+
+This is where Pluto did not yet give the clean pass hoped for.
+
+Temporal background = none:
+- exact nominal score = 2.799
+- best local score = 3.919 at (0.0, +1.0)
+- best local score equals the best outer null-control score
+- exact nominal track does not beat null controls cleanly
+
+Temporal background = savgol:
+- exact nominal score = 2.838
+- best local score = 4.551 at (+0.5, -0.5)
+- best outer null-control score = 3.536 at (-1.0, +0.5)
+- best near-nominal track does beat the outer controls
+- exact nominal track still does not beat the best control
+
+Judgment:
+- Pluto does not yet deliver a clean "exact nominal track dominates nearby
+  controls" result in the current shift-stack analysis
+- the bright target is clearly present in the data path, but the stacked ranking
+  still prefers a small local offset rather than the exact nominal track
+
+Cadence growth
+
+Temporal background = none:
+- exact nominal track starts strong and remains positive, but the best local
+  offset behaves oddly at small frame counts and only overtakes later
+- this is not the most reassuring growth pattern for a calibration source
+
+Temporal background = savgol:
+- the best near-nominal offset is favored at every checkpoint after the first
+- best score grows from about 2.58 at 216 frames to 4.55 at 864 frames
+- exact nominal score also grows overall, from about 1.44 to 2.84
+- this is more directionally sensible than the no-temporal-background case
+
+Still, the exact nominal track is not the preferred one, so the cadence-growth
+story is only partially successful.
+
+Comparison: direct photometry vs shift-stack
+
+The two diagnostics agree on some important points:
+- barycentric=true is the only timing mode that behaved self-consistently here
+- the Pluto signal is genuinely present in the real bundle
+- the detector-local geometry path is working
+
+They do not yet agree perfectly on the strongest target track:
+- direct moving-aperture photometry on the nominal predicted track looks
+  sensible
+- shift-stack recovery prefers a small local offset, especially in the savgol
+  run
+
+This suggests the remaining issue is not simply "no real signal." It is more
+likely a subpixel track/alignment convention issue, a ranking-statistic issue,
+or some interaction between local background structure and the stacked scoring.
+
+Implications for the Sedna pipeline
+
+This Pluto pass increases confidence in some parts of the Sedna path:
+- the real-data seam is real and operational
+- geometry checking is doing useful work
+- barycentric=true is again the better operational choice on a real target
+- direct detector-local target signal can be measured on the predicted track
+
+But Pluto did not fully clear the strongest stacking gate. Because the exact
+nominal Pluto track still does not beat null controls cleanly, there remains a
+fundamentals issue in the nominal-track shift-stack path. That means Sedna may
+well be sensitivity-limited, but the shift-stack/offset-ranking conventions are
+not yet validated strongly enough to declare that solved.
+
+Current conclusion
+
+Pluto is a partial pass, not a full pass.
+
+Passes:
+- bundle build
+- geometry gate
+- direct moving-aperture sanity check
+- barycentric=true as preferred operational timing mode
+
+Not yet a clean pass:
+- exact nominal shift-stack track is not the clear winner
+- nearby null-control separation is still not as clean as desired for a bright
+  calibration source
+
+Recommended next 3 tasks
+
+1. Audit the persistent subpixel offset issue directly on the Pluto bundle,
+   including local coordinate conventions, interpolation, and whether the
+   photometric optimum also moves when evaluated at nearby offsets.
+2. Repeat the Pluto calibration on the backup bounded window to see whether the
+   same offset behavior persists, which would point to a systematic convention
+   issue rather than a one-window artifact.
+3. Only after the Pluto nominal-vs-control behavior is cleaner, revisit Sedna
+   with the same validated barycentric=true + rolling loader path and the same
+   null-control discipline.

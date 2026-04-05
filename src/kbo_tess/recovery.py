@@ -183,6 +183,12 @@ def _filter_cube_bundle(cube_bundle: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
+def filter_cube_bundle(cube_bundle: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper for applying the bundle quality mask consistently."""
+
+    return _filter_cube_bundle(cube_bundle)
+
+
 def align_ephemeris_to_cube_times(ephem_df: Any, cube_times: Any) -> Any:
     """Interpolate a detector-local ephemeris onto cube cadence times."""
 
@@ -319,6 +325,12 @@ def _resolve_track_coordinates(aligned_ephem: Any) -> tuple[Any, Any, str]:
         numpy.asarray(aligned_ephem["y"], dtype=float),
         "detector_input",
     )
+
+
+def resolve_track_coordinates(aligned_ephem: Any) -> tuple[Any, Any, str]:
+    """Public wrapper for choosing the best available detector-local track coordinates."""
+
+    return _resolve_track_coordinates(aligned_ephem)
 
 
 def _build_offset_grid(radius: float, step: float) -> Any:

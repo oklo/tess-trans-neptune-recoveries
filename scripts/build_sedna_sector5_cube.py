@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a bounded real-data Sedna moving-cutout bundle for Sector 5 / camera 1 / CCD 4."""
+"""Build a bounded real-data moving-cutout bundle for one target detector track."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from kbo_tess.tess_loader import (  # noqa: E402
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Materialize a real moving TESS cutout bundle for a bounded Sedna rehearsal.",
+        description="Materialize a real moving TESS cutout bundle for a bounded target rehearsal.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--target", default="Sedna", help="Target designation.")

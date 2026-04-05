@@ -2,10 +2,12 @@
 
 __all__ = [
     "background",
+    "candidates",
     "control_studies",
     "ephem",
     "geometry",
     "injection",
+    "photometry",
     "recovery",
     "shiftstack",
     "tess_loader",

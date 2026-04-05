@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Geometry sanity check for a real Sedna moving-cutout bundle."""
+"""Geometry sanity check for a real detector-local moving-cutout bundle."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from kbo_tess.tess_loader import build_cube_bundle_from_tess_asteroids  # noqa: 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Check Sedna timing and geometry consistency before any recovery claim.",
+        description="Check timing and geometry consistency before any detector-local recovery claim.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--target", default="Sedna", help="Target designation.")

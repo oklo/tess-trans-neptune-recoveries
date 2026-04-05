@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run a small null-track control study around the nominal Sedna path."""
+"""Run a small null-track control study around a nominal detector-local target path."""
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from kbo_tess.recovery import load_cube_npz, run_known_path_recovery, write_reco
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Compare the nominal Sedna track against a small set of neighboring null tracks.",
+        description="Compare a nominal detector-local target track against a small set of neighboring null tracks.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--target", default="Sedna", help="Target designation.")
@@ -39,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--near-radius", type=float, help="Radius defining the near-nominal neighborhood. Defaults to the inner non-zero search ring.")
     parser.add_argument("--outdir", type=Path, default=PROJECT_ROOT / "outputs" / "real_control_study", help="Directory for null-control outputs.")
     return parser
+
+
+def _prefix(target: str, sector: int, camera: int, ccd: int, label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", target.lower()).strip("_")
+    return f"{slug}_sector{sector}_cam{camera}_ccd{ccd}_{label}"
 
 
 def main() -> int:
@@ -61,7 +67,11 @@ def main() -> int:
         offset_grid_radius=args.offset_grid_radius,
         offset_grid_step=args.offset_grid_step,
     )
-    write_recovery_products(recovery, args.outdir / "null_control_recovery", prefix="sedna_sector5_null_control_recovery")
+    write_recovery_products(
+        recovery,
+        args.outdir / "null_control_recovery",
+        prefix=_prefix(args.target, args.sector, args.camera, args.ccd, "null_control_recovery"),
+    )
     null_summary_bundle = evaluate_null_track_controls(
         recovery,
         control_radius=args.control_radius,
@@ -70,7 +80,7 @@ def main() -> int:
     output_paths = write_null_control_products(
         null_summary_bundle,
         args.outdir,
-        prefix="sedna_sector5_null_track_controls",
+        prefix=_prefix(args.target, args.sector, args.camera, args.ccd, "null_track_controls"),
     )
 
     summary = null_summary_bundle["summary"]

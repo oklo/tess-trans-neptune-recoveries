@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Known-path Sedna recovery driver for TESS Sector 5, camera 1, CCD 4."""
+"""Known-path detector-local recovery driver for a target TESS track."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from kbo_tess.tess_loader import build_cube_bundle_from_tess_asteroids  # noqa: 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Recover Sedna from TESS Sector 5 with known-path shift-and-stack.",
+        description="Recover a target from a detector-local TESS track with known-path shift-and-stack.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--target", default="Sedna", help="Target designation.")

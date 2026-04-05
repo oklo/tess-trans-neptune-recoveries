@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run a small real-bundle injection sweep on a bounded Sedna cutout bundle."""
+"""Run a small real-bundle injection sweep on a bounded detector-local target bundle."""
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from kbo_tess.recovery import load_cube_npz  # noqa: E402
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Inject a synthetic moving source into a real Sedna bundle and sweep amplitudes.",
+        description="Inject a synthetic moving source into a real detector-local target bundle and sweep amplitudes.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--target", default="Sedna", help="Target designation.")
@@ -50,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _default_amplitudes(noise_sigma: float) -> list[float]:
     factors = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
     return [float(factor * noise_sigma) for factor in factors]
+
+
+def _prefix(target: str, sector: int, camera: int, ccd: int) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", target.lower()).strip("_")
+    return f"{slug}_sector{sector}_cam{camera}_ccd{ccd}_injection_calibration"
 
 
 def main() -> int:
@@ -83,7 +89,7 @@ def main() -> int:
     output_paths = write_injection_products(
         injection_summary,
         args.outdir,
-        prefix="sedna_sector5_injection_calibration",
+        prefix=_prefix(args.target, args.sector, args.camera, args.ccd),
     )
 
     print("Injection calibration:")
