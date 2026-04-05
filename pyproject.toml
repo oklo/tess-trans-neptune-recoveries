@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kbo-tess"
+version = "0.1.0"
+description = "Shift-and-stack search tools for faint moving objects in TESS data."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "scipy",
+]
+
+[project.optional-dependencies]
+ephem = [
+    "tess-ephem; python_version < '3.13'",
+]
+tess = [
+    "tess-ephem; python_version < '3.13'",
+    "tess-asteroids; python_version < '3.13'",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,165 @@
+Sedna Interim Report
+2026-04-05
+
+Project overview
+
+This repository contains a small Python project for detector-local TESS
+recoveries of trans-Neptunian objects using normalized ephemerides, moving
+cutouts, and known-path shift-stack workflows. The work began as synthetic
+scaffolding and has now crossed into a real-data rehearsal and bounded control
+study centered on Sedna in TESS Sector 5, camera 1, CCD 4.
+
+Current repository contents
+
+The repo currently contains:
+- reusable Python modules under src/kbo_tess/ for ephemeris normalization,
+  background subtraction, geometry checks, moving-cutout materialization,
+  known-path recovery, injection studies, and control-study reporting
+- executable scripts under scripts/ for inventory, cube building, geometry
+  checks, recovery, barycentric comparison, injection calibration, and
+  null-track controls
+- fast non-network tests under tests/
+- a tiny detector-local ephemeris fixture under tests/fixtures/
+- local generated outputs under outputs/ from synthetic checks, the bounded real
+  Sedna rehearsal, and the first control-study pass
+
+What was built
+
+The main architectural seam is now:
+1. normalized ephemeris CSV
+2. detector-local NPZ cube bundle
+3. geometry gate
+4. known-path recovery and bounded local offset search
+
+The ephemeris path now requires exact TDB handling for real-data workflows.
+UTC inputs are only accepted when an exact tdb-ut correction is available, and
+the canonical downstream time column is time_tdb_jd_minus_2457000. Real cube
+bundles preserve timing and geometry metadata needed to diagnose barycentric vs
+spacecraft timing semantics and detector-to-cutout coordinate mapping.
+
+What now works
+
+The local-file seam works end to end.
+
+The real-data rehearsal works on a bounded Sedna subset using tess_ephem and
+tess_asteroids to materialize a detector-local moving cutout bundle, followed
+by a geometry check and known-path recovery attempt.
+
+The geometry gate succeeds on the bounded real Sedna subset already tested.
+
+The real-data control-study path also works:
+- barycentric vs spacecraft timing comparison
+- injection calibration on an existing real bundle
+- null-track controls around the nominal Sedna path
+- cadence-growth summaries on the bounded subset
+
+Real-data Sedna status
+
+This project has not recovered Sedna in a defensible scientific sense.
+
+What has been demonstrated is narrower and still valuable:
+- a real Sedna moving cutout can be built reproducibly on the chosen detector
+- the geometry checks pass on the bounded subset
+- the known-path stack can be run honestly on real detector-local data
+- the current analysis can distinguish obvious injected track-aligned signals
+
+Key findings from the bounded control study
+
+The bounded comparison used the same 96-cadence Sedna subset for both timing
+interpretations.
+
+Geometry:
+- barycentric=false passed
+- barycentric=true also passed
+- barycentric=true was slightly better geometrically on this tested subset
+  (corner residual median/max about 0.0027 / 0.0036 px versus
+  0.0119 / 0.0125 px)
+
+Recovery behavior:
+- the most self-consistent bounded configuration so far is
+  barycentric=true + loader background rolling + recovery background none
+- the best local offset in the bounded runs remains near nominal at about
+  (-0.5, +0.5) px
+- the exact nominal Sedna track does not stand out cleanly
+
+Injection calibration:
+- coherent moving source injections along the bundle track are recovered
+  strongly with the current pipeline
+- even modest injections produce much stronger nominal and best-offset scores
+  than the real bounded Sedna subset
+- this argues that the current subset is more likely information-limited, or
+  slightly track-mismatched, than completely statistic-limited
+
+Null-track controls:
+- the best near-nominal offset does beat the outer null-control ring
+- the separation is weak, not decisive
+- the exact nominal track does not beat nearby controls cleanly
+
+Cadence growth:
+- growth on the bounded subset is mixed rather than cleanly monotonic
+- the near-nominal best offset stays positive
+- the exact nominal track does not become steadily favored as more cadences are
+  added
+
+Why Sedna is not yet recovered
+
+The current evidence does not satisfy the internal stopping rule for a recovery
+claim.
+
+Although geometry passes and the real-data seam is functioning, the nominal or
+very near-nominal track is not yet separated robustly from nearby null controls,
+and the cadence-growth behavior is not yet directionally strong enough. The
+bounded control study therefore supports "real cutout built, geometry passed,
+known-path stack attempted" but not "Sedna recovered."
+
+Current preferred bounded configuration
+
+The current preferred bounded analysis configuration is:
+- barycentric=true
+- tess_asteroids loader background method = rolling
+- recovery temporal background method = none
+- local dx/dy search retained for diagnosis, not for overclaiming detection
+
+This preference is based on slightly better geometry consistency and on keeping
+the real-data recovery behavior closest to the physically expected track.
+
+What remains uncertain
+
+Several uncertainties remain:
+- whether the recurring near-nominal offset is due to a real subpixel track
+  mismatch, interpolation choice, detector-to-cutout convention, or residual
+  timing interpretation issues
+- how the current injection amplitudes map onto a physically realistic Sedna
+  flux scale in TESS bundle units
+- whether a somewhat larger but still bounded subset would improve the evidence
+  materially, or simply add more of the same ambiguity
+
+Repo hygiene / publication notes
+
+The source tree is publication-worthy in structure, but most generated outputs
+should remain local and uncommitted by default. In particular:
+- outputs/real_rehearsal/ and outputs/real_control_study/ are scientifically
+  useful local artifacts, but they are derived products and should not be
+  published automatically
+- virtual environments, caches, egg-info metadata, and other machine-local
+  artifacts should remain ignored
+- the tiny test fixture under tests/fixtures/ is small and useful to keep
+
+Recommended next step: Pluto calibration target
+
+Pluto is the right next calibration target because it should provide a much
+clearer real moving-object signal than Sedna while exercising the same detector-
+local ephemeris, moving-cutout, geometry-check, and known-path recovery seam.
+That makes Pluto the most efficient way to decide whether the remaining
+limitation is astrophysical faintness, a small track/geometry mismatch, or the
+need for a modest detection-statistic refinement.
+
+Suggested next 3 tasks
+
+1. Run the same bounded workflow on Pluto as a positive-control calibration
+   target, preserving the normalized ephemeris + cube-bundle seam.
+2. Audit the persistent near-nominal Sedna offset physically, including
+   interpolation, detector/cutout conventions, and any remaining timing-frame
+   ambiguity.
+3. Calibrate injected source amplitudes into an approximate physical flux scale
+   so "detectable in this subset" becomes quantitative rather than relative.
