@@ -1,0 +1,153 @@
+Pluto Empirical Significance Report
+2026-04-05
+
+Frozen bundle path
+- /Users/greglaughlin/src/kbo-tess/outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+
+Context
+- This pass stayed on the same frozen Pluto bundle used in the stack-audit and x-calibration work:
+  Pluto, Sector 92, camera 2, CCD 1, barycentric=true, loader background rolling.
+- Geometry already passes on this bundle.
+- Direct moving-aperture photometry is sensible on the predicted track.
+- Real-bundle injections already showed that the stacker itself is not the main failure.
+- The open question here was no longer “is the stacker broken?” but rather:
+  is Pluto genuinely present above matched real-bundle systematics, even if the stack is not yet optimally calibrated?
+
+Canonical analysis configuration
+- Recovery / analysis background: none
+- Observed track family:
+  nominal local bundle track
+  calibrated x track with constant dx = -0.45 px and dy = 0
+- Calibrated x was read programmatically from:
+  outputs/pluto_x_calibration/pluto_sector92_cam2_ccd1_x_calibration_summary.json
+- The observed “best-of-rule” statistic was defined as the better of nominal and calibrated-x.
+
+Why naive randomization was not used
+- A moving-Pluto cutout is not well served by naive frame shuffles or weak randomizations, because those can leave the real Pluto signal near the cutout center and make the false-alarm rate look too optimistic.
+- The primary null therefore used matched pseudo-tracks that preserve:
+  the exact cadence times
+  the exact relative track shape through time
+  the same nominal-versus-calibrated-x choice rule used for Pluto
+- To further reduce contamination from the real Pluto path, the null ensemble was run on a source-scrubbed version of the frozen cube bundle.
+
+Observed tracks tested
+- Direct nominal track
+- Direct calibrated-x track
+- Direct best-of-two rule
+- Stack nominal track
+- Stack calibrated-x track
+- Stack best-of-two rule
+
+Statistics used
+- Primary statistic:
+  mean(aperture_snr_i) over all cadences along the fixed local track
+  where aperture_snr_i is the existing moving-aperture annulus-based statistic already used in this repository
+- Secondary statistic:
+  aperture_snr of the aligned stack at the fixed nominal reference pixel
+  using the same stack aperture-based central score already used in the Pluto recovery path
+- These statistics were fixed before running the null ensemble.
+
+Null design
+- Null family:
+  constant translations of the Pluto local track through blank-sky locations in the same cutout
+- Number of null realizations:
+  256
+- Edge margin:
+  5.0 px
+- Exclusion radius from the true Pluto track:
+  3.0 px
+- Look-elsewhere matching:
+  yes
+  every null realization was allowed the same nominal / calibrated-x / best-of-two rule as the observed Pluto analysis
+- Source-scrubbed cube:
+  yes
+  a moving aperture centered on the calibrated-x Pluto path was masked and filled by local annulus resampling frame by frame
+
+Empirical p-values
+- Direct nominal:
+  observed score = 0.05084
+  p = 0.0156
+- Direct calibrated-x:
+  observed score = 0.03109
+  p = 0.0584
+- Direct best-of-two:
+  observed score = 0.05084
+  best label = nominal
+  p = 0.0272
+- Stack nominal:
+  observed score = 2.7999
+  p = 0.0039
+- Stack calibrated-x:
+  observed score = 3.0980
+  p = 0.0117
+- Stack best-of-two:
+  observed score = 3.0980
+  best label = calibrated_x
+  p = 0.0117
+
+Interpretation of the matched-null results
+- Pluto does appear genuinely present in this frozen bundle.
+- Both the direct statistic and the stack statistic are more extreme than almost all matched pseudo-track nulls built from the same cutout systematics.
+- The direct and stack sides do not favor the same exact track:
+  direct best-of-two prefers the nominal track
+  stack best-of-two prefers the calibrated-x track
+- That split is important.
+  It means the empirical-significance result supports “Pluto is there,” but it also supports “the current stack-path calibration is still not fully settled.”
+
+Split-half reproducibility
+- Split mode:
+  even vs odd cadences
+- Directionally, both halves support Pluto:
+  direct best-of-two observed score is above the null median in both halves
+  stack best-of-two observed score is above the null median in both halves
+- However, the split-half p-values are much weaker than the full-bundle p-values:
+  even direct best-of-two p = 0.257
+  odd direct best-of-two p = 0.183
+  even stack best-of-two p = 0.074
+  odd stack best-of-two p = 0.311
+- Interpretation:
+  the split halves are directionally supportive, but not independently strong enough to count as a fully reproducible clean detection under the same matched-null standard.
+
+Classification
+- Classification for this pass:
+  B) Pluto likely present but stack still unresolved
+
+Why not A
+- The full-bundle matched-null evidence is real, but the split-half evidence is only directional, not individually strong.
+- The direct and stack statistics also prefer different track choices.
+- That is enough to say Pluto is likely present, but not enough to say the full recovery path is completely clean.
+
+What this says about “Pluto is present” versus “Pluto is optimally recovered”
+- Pluto is likely genuinely present in the frozen bundle.
+- The remaining problem is not “we might just be gathering noise.”
+- The remaining problem is that the direct and stack analyses are still not perfectly aligned about the best local track, which means recovery calibration remains unfinished.
+- So the right conclusion is:
+  Pluto presence looks supported
+  optimal Pluto recovery is still unresolved
+
+Implication for Sedna
+- This is meaningful progress for Sedna, because it shifts the uncertainty away from source existence and toward recovery calibration.
+- However, it is still not time to return to Sedna as if Pluto has fully validated the stack path.
+- Pluto should remain the calibration target until the nominal-or-physically-corrected Pluto track behaves more cleanly and reproducibly across independent cadence subsets.
+
+Outputs
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_empirical_significance_summary.json
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_empirical_summary.csv
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_null_statistics.csv
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_pseudo_tracks.csv
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_direct_null_distribution.png
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_stack_null_distribution.png
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_split_half_reproducibility.png
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_scrubbed_cube_diagnostic.png
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_scrubbed_cube_bundle.npz
+- outputs/pluto_empirical_significance/pluto_sector92_cam2_ccd1_scrub_summary.json
+
+What remains uncertain
+- The exact local track favored by the direct statistic is still nominal, while the stack statistic still prefers calibrated x = -0.45 px.
+- Split-half evidence is supportive but not yet strong enough to call the Pluto recovery path fully robust.
+- This suggests the remaining bottleneck is calibration/systematics handling, not source existence.
+
+Next 3 tasks
+1. Audit why the matched-null direct statistic favors the nominal track while the matched-null stack statistic favors calibrated x = -0.45 px on the same bundle.
+2. Repeat the same empirical-significance study on a second bounded Pluto window or cadence subset to test whether the full-bundle significance and the nominal-versus-calibrated split are stable.
+3. Only after Pluto nominal-or-physically-corrected behavior becomes cleaner in the split-half and null-control sense should the workflow return to Sedna.
