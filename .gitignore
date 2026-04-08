@@ -19,4 +19,7 @@ outputs/*
 .venv/
 .venv312/
 .mplconfig/
+.astropy_cache/
+.optional_home/
+KBO Tess notes.pages
 notebooks/.ipynb_checkpoints/

@@ -2,7 +2,7 @@ Pluto X-Calibration Report
 2026-04-05
 
 Frozen bundle path
-- /Users/greglaughlin/src/kbo-tess/outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+- outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
 
 Context
 - This pass stayed on the frozen Pluto debug case established in the prior stack audit:

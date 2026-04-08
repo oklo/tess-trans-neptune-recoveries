@@ -5,10 +5,13 @@ __all__ = [
     "candidates",
     "control_studies",
     "ephem",
+    "flux_ledger",
     "geometry",
     "injection",
     "photometry",
     "recovery",
     "shiftstack",
     "tess_loader",
+    "track_calibration",
+    "tutorial_benchmark",
 ]

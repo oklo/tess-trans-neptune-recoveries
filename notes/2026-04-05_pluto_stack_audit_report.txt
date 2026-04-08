@@ -4,7 +4,7 @@ Pluto Stack Alignment Audit
 Debug target and frozen bundle
 - Target: Pluto
 - Detector: Sector 92 / camera 2 / CCD 1
-- Frozen bundle: /Users/greglaughlin/src/kbo-tess/outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+- Frozen bundle: outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
 - Timing/loader context: barycentric=true, loader background rolling
 - Core audit context: recovery background none unless otherwise noted
 

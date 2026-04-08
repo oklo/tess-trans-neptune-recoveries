@@ -77,7 +77,17 @@ def _require_pandas() -> Any:
     return pd
 
 
+def _configure_optional_cache_dirs() -> None:
+    """Keep optional package caches inside the project workspace when possible."""
+
+    cache_root = Path(__file__).resolve().parents[2] / ".astropy_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_root))
+    os.environ.setdefault("ASTROPY_CACHE_DIR", str(cache_root))
+
+
 def _import_tess_asteroids() -> Any:
+    _configure_optional_cache_dirs()
     try:
         import certifi  # type: ignore[import-not-found]
 
@@ -89,17 +99,20 @@ def _import_tess_asteroids() -> Any:
     try:
         return importlib.import_module("tess_asteroids")
     except Exception as exc:  # pragma: no cover - depends on optional package and network state
-        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
-            try:
-                return _import_tess_asteroids_with_cached_downlinks()
-            except Exception:
-                pass
+        fallback_error: Exception | None = None
+        try:
+            return _import_tess_asteroids_with_cached_downlinks()
+        except Exception as cached_exc:
+            fallback_error = cached_exc
+        detail = f"Original import error: {exc}"
+        if fallback_error is not None:
+            detail += f" Cached-downlinks fallback error: {fallback_error}"
         raise ImportError(
             "`tess_asteroids` is required for the real moving-cutout path. "
             "Install it with `python -m pip install -e .[tess]`. "
             "Current upstream releases are typically usable on Python 3.11-3.12, and "
             "the package may need network access on first import to fetch orbit-time metadata. "
-            f"Original import error: {exc}"
+            f"{detail}"
         ) from exc
 
 
@@ -109,6 +122,37 @@ def _resolve_tess_asteroids_cache_path() -> Path:
         raise ImportError("Could not locate the installed `tess_asteroids` package path.")
     package_dir = Path(next(iter(spec.submodule_search_locations)))
     return package_dir / "data" / "TESS_orbit_times.csv"
+
+
+def _resolve_lkspacecraft_url_cache_dir() -> Path:
+    home_dir = Path(os.environ.get("HOME", str(Path.home())))
+    return home_dir / ".lkspacecraft" / "cache" / "download" / "url"
+
+
+def _build_cached_tess_models_listing() -> Any:
+    """Reconstruct the STScI models index from the local lkspacecraft cache."""
+
+    pandas = _require_pandas()
+    url_cache_dir = _resolve_lkspacecraft_url_cache_dir()
+    listing_rows: list[str] = []
+    if url_cache_dir.exists():
+        for url_path in sorted(url_cache_dir.glob("*/url")):
+            try:
+                cached_url = url_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if "https://archive.stsci.edu/missions/tess/models/TESS_EPH_DEF_" not in cached_url:
+                continue
+            filename = cached_url.rsplit("/", 1)[-1]
+            listing_rows.append(f'<td><a href="{filename}">{filename}</a>')
+    for legacy_name in ("TESS_EPH_DEF_2018004_01.bsp", "TESS_EPH_DEF_2018080_01.bsp"):
+        listing_rows.append(f'<td><a href="{legacy_name}">{legacy_name}</a>')
+    if not listing_rows:
+        raise RuntimeError(
+            "Could not reconstruct the cached TESS models index from the current "
+            "lkspacecraft cache. Seed a local cache or use `KBO_TESS_USE_SYSTEM_HOME=1`."
+        )
+    return pandas.DataFrame(listing_rows)
 
 
 def _download_downlinks_cache(destination: Path) -> Path:
@@ -132,6 +176,7 @@ def _download_downlinks_cache(destination: Path) -> Path:
 
 
 def _import_tess_asteroids_with_cached_downlinks() -> Any:
+    _configure_optional_cache_dirs()
     cache_path = _resolve_tess_asteroids_cache_path()
     if not cache_path.exists():
         _download_downlinks_cache(cache_path)
@@ -142,6 +187,8 @@ def _import_tess_asteroids_with_cached_downlinks() -> Any:
     def patched_read_csv(filepath_or_buffer: Any, *args: Any, **kwargs: Any) -> Any:
         if filepath_or_buffer == _DOWNLINKS_URL:
             filepath_or_buffer = cache_path
+        elif filepath_or_buffer == "https://archive.stsci.edu/missions/tess/models/":
+            return _build_cached_tess_models_listing()
         return original_read_csv(filepath_or_buffer, *args, **kwargs)
 
     sys.modules.pop("tess_asteroids", None)

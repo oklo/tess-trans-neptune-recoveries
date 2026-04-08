@@ -21,6 +21,14 @@ Current status:
 - The first bounded Pluto calibration run now exists on Sector 92 / camera 2 / CCD 1:
   geometry passes and direct moving-aperture photometry is sensible, but the exact
   nominal shift-stack track still does not beat null controls cleanly.
+- The official high-level `tess_asteroids` workflow now duplicates in this repo on
+  Python 3.12 when run with `KBO_TESS_USE_SYSTEM_HOME=1` and
+  `MPLCONFIGDIR=$PWD/.mplconfig`.
+- On the frozen two-day Pluto debug window, the official/simple light curve shows
+  a late-time systematics ramp. Clipping cadences later than
+  `time_tdb_jd_minus_2457000 = 3828.30` makes the bounded `background=none`
+  nominal shift-stack recovery become the best local solution and beat nearby
+  controls more cleanly.
 
 Install the baseline dependencies with:
 
@@ -32,6 +40,11 @@ For the optional real-data path, install:
 
 That path is currently most reliable on Python 3.11-3.12 because upstream
 `tess-asteroids` releases do not yet install cleanly on Python 3.13+.
+
+For the bounded official-workflow Pluto benchmark in this repo, the working
+environment is currently:
+
+`KBO_TESS_USE_SYSTEM_HOME=1 MPLCONFIGDIR=$PWD/.mplconfig .venv312/bin/python`
 
 Local-file workflow:
 - Recovery-ready ephemeris CSV with canonical columns including
@@ -66,6 +79,18 @@ Bounded Pluto calibration workflow:
 - Run known-path recovery and null controls:
   `python3 scripts/recover_sedna_sector5.py --target Pluto --sector 92 --camera 2 --ccd 1 --ephem-csv outputs/pluto_calibration/pluto_all_detector_inventory.csv --cube-npz outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz --background-method none --offset-grid-radius 1.0 --offset-grid-step 0.5 --interpolation linear --outdir outputs/pluto_calibration/primary/recovery_none`
   `python3 scripts/run_null_track_controls.py --target Pluto --sector 92 --camera 2 --ccd 1 --ephem-csv outputs/pluto_calibration/pluto_all_detector_inventory.csv --cube-npz outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz --background-method savgol --interpolation linear --offset-grid-radius 1.0 --offset-grid-step 0.5 --outdir outputs/pluto_calibration/primary/null_controls_savgol`
+- Run the transparent flux-ledger plus official-workflow benchmark:
+  `KBO_TESS_USE_SYSTEM_HOME=1 MPLCONFIGDIR=$PWD/.mplconfig .venv312/bin/python scripts/run_pluto_flux_ledger_and_tutorial.py`
+
+Latest bounded Pluto follow-up:
+- The frozen two-day Pluto bundle is still useful for debugging, but its final
+  late-time segment is contaminated by a broad systematics ramp in the official
+  and simple-aperture light curves.
+- A local clipped rerun with `time_tdb_jd_minus_2457000 <= 3828.30` leaves 777
+  of the original 864 cadences and materially improves the `background=none`
+  known-path recovery.
+- On that clipped bundle, the exact nominal Pluto track is the best local
+  solution with score `4.399`, beating the best nearby null control (`3.617`).
 
 Generated `outputs/` are local working products and are not intended to be
 committed by default. Small fixtures under `tests/fixtures/` are the preferred

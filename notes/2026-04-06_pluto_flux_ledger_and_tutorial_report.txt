@@ -1,0 +1,20 @@
+Pluto Flux-Ledger And Tutorial Report
+2026-04-06
+
+Superseded
+- This note is superseded by
+  notes/2026-04-08_pluto_flux_ledger_and_clipped_followup_report.txt.
+- The original 2026-04-06 draft predated two important updates:
+  1. the official high-level tess_asteroids workflow was later duplicated
+     successfully in this repo
+  2. a clipped Pluto rerun later showed that removing the contaminated tail
+     materially cleaned up the bounded nominal recovery
+
+Why this note was retired
+- The earlier draft incorrectly described the official tess_asteroids benchmark
+  as failing in this environment.
+- That conclusion became stale once the working Python 3.12 environment and
+  cache setup were identified.
+
+Use instead
+- notes/2026-04-08_pluto_flux_ledger_and_clipped_followup_report.txt

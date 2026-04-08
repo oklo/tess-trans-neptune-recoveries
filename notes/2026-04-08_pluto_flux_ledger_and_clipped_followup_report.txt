@@ -1,0 +1,116 @@
+Pluto Flux-Ledger And Clipped-Followup Report
+2026-04-08
+
+Frozen bundle path
+- outputs/pluto_calibration/primary/pluto_sector92_cam2_ccd1_cube_bundle.npz
+
+Bounded configuration
+- Target: Pluto
+- Sector 92 / camera 2 / CCD 1
+- Barycentric mode: true
+- Loader background: rolling
+- Core recovery background for the transparent audit: none
+
+Working official tess_asteroids environment
+- The high-level package path is now reproducible in this repo with:
+  KBO_TESS_USE_SYSTEM_HOME=1 MPLCONFIGDIR=$PWD/.mplconfig .venv312/bin/python
+- The key practical point is that `.venv312` contains the working
+  tess_asteroids stack, while `.venv` does not.
+- The environment also needs access to an lkspacecraft cache and the real home
+  cache layout expected by the upstream package chain.
+
+What the transparent flux-ledger pass established
+- Pluto is genuinely present in the frozen bundle.
+- Geometry still passes cleanly on the bounded Pluto case.
+- Direct moving-aperture photometry on the nominal track is sensible.
+- Transparent simple moving apertures recover Pluto at about the same scale as
+  the repo's current direct moving-aperture path.
+- The direct custom path therefore does not look like it is keeping only a tiny
+  residual of Pluto's flux.
+- A full 2-D dx/dy map showed that the full-window optimum was not confined to
+  the x-axis.
+
+Official workflow duplication
+- The README-style tess_asteroids quickstart benchmark now succeeds in this
+  repo environment.
+- Pluto also runs through the same high-level package path when driven from the
+  local normalized ephemeris.
+- Useful local outputs from that duplication include:
+  - outputs/pluto_flux_ledger_tutorial/docs_quickstart_1980_vr1_lc.png
+  - outputs/pluto_flux_ledger_tutorial/pluto_official_simple_lc.png
+  - outputs/pluto_flux_ledger_tutorial/pluto_sector92_cam2_ccd1_official_aperture_lightcurve.csv
+  - outputs/pluto_flux_ledger_tutorial/pluto_sector92_cam2_ccd1_official_psf_lightcurve.csv
+
+What the official/simple Pluto light curve showed
+- The official Pluto light curve is not a clean "problem solved" result.
+- Both the aperture and PSF series show a large late-time ramp in the final
+  part of the frozen two-day window.
+- That ramp is not interpreted as real Pluto brightening.
+- The safer interpretation is a broad late-time background or stray-light
+  systematic leaking into the official source estimate.
+
+Why the late ramp is treated as contamination
+- Pluto remains near the cutout center, so this is not an edge-crossing effect.
+- In the official aperture table, the background term climbs sharply late in
+  the run.
+- In the official PSF table, the fit quality also worsens late in the run.
+- The transparent local moving-aperture series changes much less than the
+  official source estimates over the same cadences.
+- Taken together, those checks argue for broad systematics contamination rather
+  than real target variability.
+
+Clipped Pluto follow-up
+- A local clipped rerun was performed using only cadences with
+  time_tdb_jd_minus_2457000 <= 3828.30.
+- That leaves 777 cadences out of the original 864.
+- Local derived products from the clipped rerun include:
+  - outputs/pluto_clipped_recovery/pluto_sector92_cam2_ccd1_cube_bundle_clipped_3828p30.npz
+  - outputs/pluto_clipped_recovery/pluto_sector92_clipped3828p30_summary.json
+  - outputs/pluto_clipped_recovery/recovery_none/pluto_sector92_clipped3828p30_none_recovery_summary.json
+  - outputs/pluto_clipped_recovery/null_controls_none/pluto_sector92_clipped3828p30_none_null_controls.json
+
+Clipped recovery result
+- Clipping materially cleaned up the bounded Pluto shift-stack recovery.
+- On the clipped bundle with background=none:
+  - exact nominal Pluto track is the best local solution
+  - best dx = 0.0
+  - best dy = 0.0
+  - nominal score = best score = 4.3988
+  - best nearby null control score = 3.6172
+  - nominal minus best control = +0.7817
+- This is substantially more physical behavior than the earlier full-window
+  off-axis preference.
+
+How to interpret the current Pluto state
+- Pluto is present in the frozen bundle.
+- The official high-level tess_asteroids workflow now works here.
+- The frozen two-day window is still contaminated at late times by broad
+  systematics.
+- The contaminated tail was materially hurting the full-window Pluto
+  shift-stack exercise.
+- After clipping that tail, the bounded background=none Pluto recovery behaves
+  much more physically.
+- This does not mean Pluto is fully solved in every configuration, but it does
+  make the bounded debug case cleaner and more trustworthy.
+
+What remains uncertain
+- The clipped rerun has not yet been carried back through the full matched-null
+  empirical-significance machinery.
+- The late-time ramp is clearly non-astrophysical in practice, but it has not
+  been traced to a unique physical source such as Earth, Moon, or Sun stray
+  light.
+- The broader question of how robustly the custom stack path behaves outside
+  the clipped window still needs follow-up.
+
+Recommended next step
+- Stay on Pluto and rerun the matched-null / empirical-significance study on the
+  clipped bundle rather than going back to Sedna yet.
+
+Suggested next 3 tasks
+1. Recompute the Pluto matched-null significance study on the clipped bundle so
+   the empirical nulls and the now-cleaner nominal recovery are compared on the
+   same cadence set.
+2. Compare the clipped official/simple light curve and the clipped transparent
+   moving-aperture series directly on the same time axis.
+3. Only after the clipped Pluto controls are settled should the project return
+   to Sedna.

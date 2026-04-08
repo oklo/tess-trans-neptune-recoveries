@@ -169,6 +169,126 @@ def run_x_offset_sweep(
     }
 
 
+def run_offset_grid_metrics(
+    cube: Any,
+    x: Iterable[float],
+    y: Iterable[float],
+    dx_grid: Iterable[float],
+    dy_grid: Iterable[float],
+    reference: tuple[float, float],
+    interpolation: str = "linear",
+    ranking_method: str = "aperture_snr",
+) -> dict[str, Any]:
+    """Evaluate direct and stacked metrics on a fixed 2-D dx/dy grid."""
+
+    numpy = _require_numpy()
+    pandas = _require_pandas()
+    x_array = numpy.asarray(x, dtype=float)
+    y_array = numpy.asarray(y, dtype=float)
+    rows: list[dict[str, float]] = []
+    for dy in [float(value) for value in dy_grid]:
+        for dx in [float(value) for value in dx_grid]:
+            shifted_x = x_array + float(dx)
+            shifted_y = y_array + float(dy)
+            direct_table = evaluate_track_photometry(cube, shifted_x, shifted_y)
+            direct_summary = _summarize_track_photometry(direct_table)
+            stack_variant = build_stack_variant(
+                cube,
+                shifted_x,
+                shifted_y,
+                reference=reference,
+                interpolation=interpolation,
+                ranking_position=reference,
+                ranking_method=ranking_method,
+            )
+            rows.append(
+                {
+                    "dx": float(dx),
+                    "dy": float(dy),
+                    **direct_summary,
+                    "direct_score": float(direct_summary["mean_aperture_snr"]),
+                    "stack_ranking_score": float(stack_variant["ranking_score"]),
+                    "stack_aperture_snr": float(stack_variant["scores"]["aperture_snr"]),
+                    "stack_peak_x": float(stack_variant["peak_location"]["x"]),
+                    "stack_peak_y": float(stack_variant["peak_location"]["y"]),
+                    "stack_peak_value": float(stack_variant["peak_location"]["value"]),
+                    "stack_peak_aperture_snr": float(stack_variant["peak_location"]["peak_aperture_snr"]),
+                    "support_at_reference": float(
+                        stack_variant["support_map"][int(round(reference[1])), int(round(reference[0]))]
+                    ),
+                }
+            )
+    table = pandas.DataFrame(rows).sort_values(["dy", "dx"]).reset_index(drop=True)
+    best_direct_row = table.loc[table["direct_score"].idxmax()].to_dict()
+    best_stack_row = table.loc[table["stack_ranking_score"].idxmax()].to_dict()
+    return {
+        "table": table,
+        "best_direct_row": best_direct_row,
+        "best_stack_row": best_stack_row,
+        "reference": {"x": float(reference[0]), "y": float(reference[1])},
+        "ranking_method": ranking_method,
+        "interpolation": interpolation,
+    }
+
+
+def plot_offset_grid_heatmaps(
+    grid_result: dict[str, Any],
+    output_path: str | Path,
+    nominal_point: tuple[float, float] = (0.0, 0.0),
+    calibrated_point: tuple[float, float] | None = None,
+) -> Path:
+    """Plot direct and stack dx/dy heatmaps with key tracks marked."""
+
+    plotting = _require_matplotlib()
+    pandas = _require_pandas()
+    table = pandas.DataFrame(grid_result["table"])
+    dx_values = sorted(table["dx"].astype(float).unique())
+    dy_values = sorted(table["dy"].astype(float).unique())
+    direct_grid = (
+        table.pivot_table(index="dy", columns="dx", values="direct_score", aggfunc="first")
+        .reindex(index=dy_values, columns=dx_values)
+    )
+    stack_grid = (
+        table.pivot_table(index="dy", columns="dx", values="stack_ranking_score", aggfunc="first")
+        .reindex(index=dy_values, columns=dx_values)
+    )
+
+    extent = [min(dx_values), max(dx_values), min(dy_values), max(dy_values)]
+    figure, axes = plotting.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    for axis, grid, title, best_row in (
+        (axes[0], direct_grid, "Direct Mean Aperture S/N", grid_result["best_direct_row"]),
+        (axes[1], stack_grid, "Stack Aperture S/N", grid_result["best_stack_row"]),
+    ):
+        artist = axis.imshow(
+            grid.to_numpy(),
+            origin="lower",
+            aspect="auto",
+            extent=extent,
+            cmap="magma",
+        )
+        axis.scatter([nominal_point[0]], [nominal_point[1]], marker="o", facecolors="none", edgecolors="white", s=70)
+        if calibrated_point is not None:
+            axis.scatter(
+                [calibrated_point[0]],
+                [calibrated_point[1]],
+                marker="s",
+                facecolors="none",
+                edgecolors="cyan",
+                s=70,
+            )
+        axis.scatter([float(best_row["dx"])], [float(best_row["dy"])], marker="x", color="lime", s=70)
+        axis.set_title(title)
+        axis.set_xlabel("dx [pix]")
+        axis.set_ylabel("dy [pix]")
+        figure.colorbar(artist, ax=axis, shrink=0.85)
+
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(destination, dpi=150)
+    plotting.close(figure)
+    return destination
+
+
 def build_variant_dictionary(
     cube: Any,
     x: Iterable[float],
