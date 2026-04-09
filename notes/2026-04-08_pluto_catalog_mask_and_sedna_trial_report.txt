@@ -1,0 +1,74 @@
+Pluto Catalog-Mask Stack And Sedna Trial
+2026-04-08
+
+Context
+- This follow-up applied the same simple raw-frame source-masking workflow to:
+  - the retained full-duration Pluto Sector 92 / camera 2 / CCD 1 bundle
+  - the trusted bounded Sedna Sector 5 / camera 1 / CCD 4 barycentric bundle
+- The goal was not precision photometry. The goal was to test whether a rough,
+  physically transparent masking plus local background subtraction is already
+  enough to make the target visible in a nominal-track raw-frame stack.
+
+Workflow
+- Start from the existing detector-local NPZ bundle and its local track.
+- Query TIC once for the detector patch and keep the bright subset that enters
+  the retained 21x21 cutout.
+- Assign a simple circular mask radius based on Tmag.
+- Preserve a fixed central 5x5 region so the target core is not masked away.
+- For each raw frame:
+  - mask the bright catalog sources outside the central 5x5 region
+  - subtract the mean of the remaining unmasked non-central pixels
+- Shift and stack on the nominal moving-target track.
+
+Code paths
+- scripts/list_pluto_catalog_crossers.py
+- scripts/run_pluto_catalog_mask_stack.py
+
+Pluto result
+- Bundle:
+  outputs/pluto_full_duration_conservative_mask/pluto_sector92_cam2_ccd1_full_cube_bundle_masked.npz
+- Catalog crossers:
+  784 raw entries, 778 unique Gaia/TIC source keys, 63 bright sources masked
+- Simple nominal raw-frame stack result:
+  - center aperture S/N = 57.53
+  - brightest off-center peak still exists at (20, 15)
+  - but Pluto is now a clear compact central source in the nominal stack
+- Interpreted conservatively, this rough workflow already retains an order-unity
+  fraction of Pluto's expected signal. It is not just recovering a tiny residual.
+
+Useful Pluto outputs
+- outputs/pluto_catalog_mask_stack/pluto_sector92_cam2_ccd1_catalog_mask_nominal_stack_heatmap.png
+- outputs/pluto_catalog_mask_stack/pluto_sector92_cam2_ccd1_catalog_mask_stack_summary.json
+- outputs/pluto_full_duration_catalog_sources/pluto_sector92_cam2_ccd1_tic_crossers_bright.csv
+
+Sedna result
+- Bundle:
+  outputs/real_control_study/barycentric/sedna_sector5_cam1_ccd4_barycentric_cube_bundle.npz
+- Catalog crossers:
+  80 unique Gaia/TIC source keys, 10 bright sources masked
+- Simple nominal raw-frame stack result:
+  - center aperture S/N = 2.26
+  - brightest peak remains off-center at (19, 12)
+  - the central Sedna position is lifted modestly, but not cleanly enough to
+    count as a comparable recovery to Pluto
+
+Useful Sedna outputs
+- outputs/sedna_catalog_mask_stack/sedna_sector5_cam1_ccd4_catalog_mask_nominal_stack_heatmap.png
+- outputs/sedna_catalog_mask_stack/sedna_sector5_cam1_ccd4_catalog_mask_stack_summary.json
+- outputs/sedna_catalog_sources/sedna_sector5_cam1_ccd4_tic_crossers_bright.csv
+
+Interpretation
+- The same rough-and-ready masking/background subtraction absolutely works as a
+  Pluto calibration demonstration.
+- The same workflow does not yet rescue Sedna.
+- That is consistent with the current scientific picture:
+  Pluto is bright enough that a transparent raw-frame nominal-track stack can
+  reveal it once obvious catalog contaminants are reduced, while Sedna remains
+  close enough to the residual noise/systematics floor that a more careful
+  treatment is still needed.
+
+Next useful step
+- Use the raw-frame Sedna stack plus the Sedna bright-source list to inspect the
+  central 5x5 versus the dominant off-center structures cadence by cadence
+  before deciding whether further masking, frame rejection, or track/local-WCS
+  cleanup is the better next move.

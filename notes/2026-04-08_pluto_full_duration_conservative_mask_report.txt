@@ -1,0 +1,40 @@
+Pluto Full-Duration Conservative Mask Report
+2026-04-08
+
+Full-duration bundle path
+- /Users/greglaughlin/src/kbo-tess/outputs/pluto_full_duration_conservative_mask/pluto_sector92_cam2_ccd1_full_cube_bundle.npz
+
+Selected path/comparison pixels
+- track_pixel_1: (10, 10) [track_residency]
+- neighbor_left: (9, 10) [neighbor]
+- neighbor_right: (11, 10) [neighbor]
+- neighbor_down: (10, 9) [neighbor]
+- neighbor_up: (10, 11) [neighbor]
+- off_track_reference: (0, 20) [off_track]
+- off_track_reference_1: (0, 0) [off_track]
+- off_track_reference_2: (20, 20) [off_track]
+
+Cadence mask choice
+- Rule: keep cadences outside 3813.70 -> 3816.10 BTJD
+- Frames before: 9845
+- Frames after: 9046
+- Frames removed: 799
+- Justification: The selected Pluto path pixel, its immediate neighbors, and off-track comparison pixels all show a broad simultaneous flux-ramp episode centered near BTJD 3815.84. The frame-wide cutout median rises from a near-zero baseline to very large positive values across the same interval, so the broad event is treated as detector-wide contamination rather than physically sensible Pluto behavior.
+
+Masked vs unmasked recovery
+- Unmasked nominal score: 0.1944
+- Masked nominal score: 6.3481
+- Unmasked best dx,dy: (-0.5, 1.0)
+- Masked best dx,dy: (1.0, 1.0)
+- Unmasked best near-nominal score: 0.4370
+- Masked best near-nominal score: 8.6567
+- Unmasked best control score: 0.6803
+- Masked best control score: 9.4770
+- Masked nominal minus best control: -3.1289
+- Masked exact nominal is best local solution: False
+
+Final classification: C
+- Masking does not materially help; the issue is deeper than the obvious ramps.
+
+Next smallest unresolved issue
+- Determine whether the remaining full-duration mismatch is dominated by additional weaker cadence-systematics outside the masked interval or by a deeper track/stack calibration issue.
