@@ -1,0 +1,79 @@
+Pluto Edge-Source Catalog Context
+2026-04-09
+
+Context
+- This pass followed up the clipped bounded Pluto reference case:
+  outputs/pluto_clipped_recovery/pluto_sector92_cam2_ccd1_cube_bundle_clipped_3828p30.npz
+- The goal was to identify the meaning of the supported off-center source in the
+  clipped nominal stack near stack pixel (18, 6), without rebuilding the broad
+  Pluto workflow.
+
+What was checked
+- Existing clipped-edge diagnostic products:
+  outputs/pluto_edge_source_diagnostic/pluto_clipped_edge_source_summary.json
+  outputs/pluto_edge_source_diagnostic/pluto_clipped_edge_source_contributions.csv
+- Existing Pluto TIC/Gaia source list:
+  outputs/pluto_full_duration_catalog_sources/pluto_sector92_cam2_ccd1_tic_crossers_deduped.csv
+- The clipped bundle geometry and corner arrays were used to convert the
+  back-projected raw-local feature coordinates into inferred detector positions.
+
+Feature persistence
+- The off-center source is not a low-support edge artifact:
+  support = 777 / 777 frames
+- The strongest contributing cadences are scattered across the clipped interval:
+  3826.5259 -> 3828.0653 BTJD
+- The back-projected raw-local positions of the top 30 contributing cadences
+  remain tightly clustered:
+  x = 18.016 +/- 0.313 pix
+  y = 5.393 +/- 0.262 pix
+
+Detector-local position
+- The same top 30 cadences map to a stable detector neighborhood:
+  detector x = 1415.516 +/- 0.250
+  detector y = 1135.726 +/- 0.871
+- This is consistent with a persistent source or source patch on the detector,
+  not with a transient time-local ramp.
+
+Catalog context
+- The inferred detector position lands in a source-rich catalog neighborhood.
+- The nearest catalog matches from the existing Pluto TIC/Gaia table are:
+  - TIC 1993588082 / Gaia 6849862195851638272 / Tmag 20.64
+    detector distance to feature mean = 0.24 pix
+    mean same-frame distance on top 30 cadences = 0.80 pix
+    top-30 matches within 1.0 pix = 19 / 30
+  - TIC 1993588083 / Gaia 6849862200145038848 / Tmag 20.05
+    detector distance = 0.59 pix
+    mean same-frame distance on top 30 cadences = 0.95 pix
+    top-30 matches within 1.0 pix = 18 / 30
+  - TIC 1993588084 / Gaia 6849862200147879680 / Tmag 19.30
+    detector distance = 0.79 pix
+    mean same-frame distance on top 30 cadences = 1.01 pix
+    top-30 matches within 1.0 pix = 16 / 30
+- A much brighter source also sits in the same detector patch:
+  - TIC 72203105 / Gaia 6849862195851029760 / Tmag 10.74
+    detector distance = 0.84 pix
+    mean same-frame distance on top 30 cadences = 1.10 pix
+
+Interpretation
+- The off-center feature is most consistent with a persistent fixed-source
+  residual or blended source patch, not with an interpolation / edge-support
+  artifact.
+- The nearby faint TIC entries likely indicate a small source group or
+  deblended components in the same neighborhood, while the Tmag 10.74 source
+  suggests that bright-source wings or blend residuals are also plausible.
+- The clipped nominal Pluto stack still behaves physically at the target
+  location, but the strongest off-target supported peak is best interpreted as
+  static-source contamination in a source-rich detector patch.
+
+Implication for next smallest fix
+- The next smallest fix is not a more elaborate global ramp cut.
+- It is to add static-source masking or veto logic for persistent off-target
+  supported peaks that map onto known catalog sources or source-rich patches.
+- For Sedna-scale work, this suggests that background handling should include a
+  catalog-aware contamination guard, not just broad cadence rejection and local
+  background subtraction.
+
+Useful outputs from this pass
+- outputs/pluto_edge_source_diagnostic/pluto_clipped_edge_source_catalog_matches.csv
+- outputs/pluto_edge_source_diagnostic/pluto_clipped_edge_source_diagnostic.png
+- outputs/pluto_edge_source_diagnostic/pluto_clipped_edge_source_summary.json

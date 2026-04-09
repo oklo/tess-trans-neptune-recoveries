@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from kbo_tess.ephem import load_ephemeris_csv
-from kbo_tess.shiftstack import score_stack, stack_with_support
+from kbo_tess.shiftstack import apply_support_gate, score_stack, stack_with_support
 from kbo_tess.tutorial_benchmark import _configure_benchmark_environment, _ephem_for_tess_asteroids, _import_tess_asteroids
 
 
@@ -68,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--central-box-size", type=int, default=5)
     parser.add_argument("--mag-limit", type=float, default=15.5)
     parser.add_argument("--interpolation", choices=("nearest", "linear"), default="linear")
+    parser.add_argument("--support-fraction-min", type=float, default=0.0)
+    parser.add_argument("--support-frames-min", type=float, default=0.0)
     return parser
 
 
@@ -183,13 +185,24 @@ def process_cube(
     return processed, pd.DataFrame(rows), summary
 
 
-def plot_stack_heatmap(stack: np.ndarray, support_map: np.ndarray, output_path: Path, target: str) -> None:
+def plot_stack_heatmap(
+    stack: np.ndarray,
+    support_map: np.ndarray,
+    output_path: Path,
+    target: str,
+    support_threshold_frames: float | None = None,
+) -> None:
+    cmap = plt.get_cmap("magma").copy()
+    cmap.set_bad("black")
     vmin = float(np.nanpercentile(stack, 5))
     vmax = float(np.nanpercentile(stack, 99.5))
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.8), constrained_layout=True)
-    im0 = axes[0].imshow(stack, origin="lower", cmap="magma", vmin=vmin, vmax=vmax)
+    im0 = axes[0].imshow(stack, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
     axes[0].scatter([10], [10], marker="x", s=60, linewidths=1.3, color="cyan")
-    axes[0].set_title(f"Catalog-masked {target} nominal stack")
+    title = f"Catalog-masked {target} nominal stack"
+    if support_threshold_frames is not None:
+        title += f"\nSupport gate >= {support_threshold_frames:.1f} frames"
+    axes[0].set_title(title)
     axes[0].set_xlabel("Local x [pix]")
     axes[0].set_ylabel("Local y [pix]")
     fig.colorbar(im0, ax=axes[0], shrink=0.85, label="Mean stacked flux")
@@ -250,8 +263,23 @@ def main() -> int:
     )
     stack = np.asarray(stack_result["stack"], dtype=float)
     support_map = np.asarray(stack_result["support_map"], dtype=float)
-    heatmap_path = args.outdir / f"{prefix}_catalog_mask_nominal_stack_heatmap.png"
-    plot_stack_heatmap(stack, support_map, heatmap_path, target=str(args.target))
+    gate_kwargs = {
+        "min_support_fraction": float(args.support_fraction_min) if float(args.support_fraction_min) > 0 else None,
+        "min_support_frames": float(args.support_frames_min) if float(args.support_frames_min) > 0 else None,
+    }
+    gated_threshold = None
+    if any(value is not None for value in gate_kwargs.values()):
+        gated = apply_support_gate(stack, support_map, **gate_kwargs)
+        stack = np.asarray(gated["stack"], dtype=float)
+        gated_threshold = float(gated["threshold_frames"])
+    suffix_parts: list[str] = []
+    if float(args.support_fraction_min) > 0:
+        suffix_parts.append(f"supportfrac{str(args.support_fraction_min).replace('.', 'p')}")
+    if float(args.support_frames_min) > 0:
+        suffix_parts.append(f"supportn{str(args.support_frames_min).replace('.', 'p')}")
+    suffix = "_" + "_".join(suffix_parts) if suffix_parts else ""
+    heatmap_path = args.outdir / f"{prefix}_catalog_mask_nominal_stack{suffix}_heatmap.png"
+    plot_stack_heatmap(stack, support_map, heatmap_path, target=str(args.target), support_threshold_frames=gated_threshold)
 
     center_score = float(score_stack(stack, method="aperture_snr", position=(10.0, 10.0)))
     peak_y, peak_x = np.unravel_index(np.nanargmax(stack), stack.shape)
@@ -268,6 +296,7 @@ def main() -> int:
         "stack_peak_x": int(peak_x),
         "stack_peak_y": int(peak_y),
         "stack_peak_value": float(np.nanmax(stack)),
+        "support_threshold_frames": gated_threshold,
         "heatmap_png": str(heatmap_path),
         "catalog_mask_sources_csv": str(args.outdir / f"{prefix}_catalog_mask_sources.csv"),
         "frame_backgrounds_csv": str(args.outdir / f"{prefix}_catalog_mask_frame_backgrounds.csv"),

@@ -1,0 +1,45 @@
+Pluto Spillover-Masking Milestone
+2026-04-09
+
+Context
+- This pass followed the raw-frame Pluto catalog-masked stack workflow on the
+  full retained Sector 92 / camera 2 / CCD 1 bundle:
+  outputs/pluto_full_duration_conservative_mask/pluto_sector92_cam2_ccd1_full_cube_bundle_masked.npz
+- The earlier raw-frame nominal stack showed Pluto clearly at the center, but a
+  brighter off-center peak remained at stack pixel (20, 15).
+
+What changed
+- The catalog-crosser selection was expanded so TIC/Gaia sources whose centers
+  never enter the 21x21 cutout can still be included when their PSF wings spill
+  into the cutout.
+- This was implemented by widening the detector-footprint overlap rule in:
+  scripts/list_pluto_catalog_crossers.py
+- The raw-frame stack workflow in:
+  scripts/run_pluto_catalog_mask_stack.py
+  was then rerun using the expanded bright-source list.
+
+Numerical change
+- Bright masked sources increased from 63 to 88.
+- Mean masked pixels per frame increased from about 187.3 to 191.2.
+- Center aperture S/N stayed essentially unchanged:
+  before = 57.53
+  after  = 57.21
+- The final stack peak moved from the contaminant at (20, 15) to the Pluto core
+  neighborhood at (11, 10).
+
+Interpretation
+- Off-grid bright sources and their PSF wings were a real contamination mode.
+- Expanding the catalog mask to include spillover sources removed the dominant
+  outer-edge bright peak without materially weakening the central Pluto signal.
+- This is a meaningful improvement over the earlier raw-frame Pluto stack and is
+  a milestone for the Pluto calibration workflow.
+
+Useful outputs
+- outputs/pluto_catalog_mask_stack/pluto_sector92_cam2_ccd1_catalog_mask_nominal_stack_supportn20p0_heatmap.png
+- outputs/pluto_catalog_mask_stack/pluto_sector92_cam2_ccd1_catalog_mask_stack_summary.json
+- outputs/pluto_full_duration_catalog_sources/pluto_sector92_cam2_ccd1_tic_crossers_bright.csv
+
+Implication
+- The next smallest background-handling fix for harder targets should include
+  catalog-aware masking that covers both in-frame sources and off-grid spillover
+  sources, not only stars whose centroids enter the cutout.

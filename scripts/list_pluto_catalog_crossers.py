@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List TIC/Gaia catalog sources that pass through a retained moving-target cutout."""
+"""List TIC/Gaia catalog sources that pass through or spill into a retained moving-target cutout."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def _require_catalog_tools() -> tuple[Any, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Identify TIC/Gaia catalog sources that pass through a retained 21x21 moving-target cutout.",
+        description="Identify TIC/Gaia catalog sources that pass through or spill into a retained 21x21 moving-target cutout.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", default="Pluto")
     parser.add_argument("--target-mag-limit", type=float, default=15.5)
     parser.add_argument("--query-radius-deg", type=float, default=0.0)
-    parser.add_argument("--bbox-margin-pix", type=float, default=1.0)
+    parser.add_argument("--bbox-margin-pix", type=float, default=4.0)
     parser.add_argument("--central-radius-pix", type=float, default=5.0)
     return parser
 
@@ -162,13 +162,20 @@ def compute_crossers(
             & (y_star >= corner2)
             & (y_star <= ymax_frame)
         )
+        spill = (
+            (x_star >= (corner1 - float(bbox_margin_pix)))
+            & (x_star <= (xmax_frame + float(bbox_margin_pix)))
+            & (y_star >= (corner2 - float(bbox_margin_pix)))
+            & (y_star <= (ymax_frame + float(bbox_margin_pix)))
+        )
         n_inside = int(np.count_nonzero(inside))
-        if n_inside == 0:
+        n_spill = int(np.count_nonzero(spill))
+        if n_spill == 0:
             continue
         local_x = x_star - corner1
         local_y = y_star - corner2
         distance_to_pluto = np.hypot(local_x - local_pluto_x, local_y - local_pluto_y)
-        central = inside & (distance_to_pluto <= float(central_radius_pix))
+        central = spill & (distance_to_pluto <= float(central_radius_pix))
 
         gaia_value = str(table["GAIA"][j]).strip() if "GAIA" in table.colnames else ""
         gaia_id = gaia_value if gaia_value not in {"", "--", "nan", "None"} else ""
@@ -186,13 +193,15 @@ def compute_crossers(
                 "detector_x": x_star,
                 "detector_y": y_star,
                 "n_cadences_in_frame": n_inside,
+                "n_cadences_in_spill_region": n_spill,
+                "center_enters_frame": bool(n_inside > 0),
                 "n_cadences_within_central_radius": int(np.count_nonzero(central)),
-                "first_time_in_frame": float(time[inside][0]),
-                "last_time_in_frame": float(time[inside][-1]),
-                "first_local_x": float(local_x[inside][0]),
-                "first_local_y": float(local_y[inside][0]),
-                "last_local_x": float(local_x[inside][-1]),
-                "last_local_y": float(local_y[inside][-1]),
+                "first_time_overlap": float(time[spill][0]),
+                "last_time_overlap": float(time[spill][-1]),
+                "first_local_x": float(local_x[spill][0]),
+                "first_local_y": float(local_y[spill][0]),
+                "last_local_x": float(local_x[spill][-1]),
+                "last_local_y": float(local_y[spill][-1]),
                 "min_distance_to_pluto_pix": float(np.nanmin(distance_to_pluto)),
             }
         )
@@ -208,19 +217,19 @@ def compute_crossers(
         return frame, summary
 
     frame = frame.sort_values(
-        ["tmag", "n_cadences_in_frame", "min_distance_to_pluto_pix"],
-        ascending=[True, False, True],
+        ["tmag", "n_cadences_in_spill_region", "n_cadences_in_frame", "min_distance_to_pluto_pix"],
+        ascending=[True, False, False, True],
         na_position="last",
     ).reset_index(drop=True)
 
     deduped = (
         frame.sort_values(
-            ["source_key", "tmag", "n_cadences_in_frame"],
-            ascending=[True, True, False],
+            ["source_key", "tmag", "n_cadences_in_spill_region", "n_cadences_in_frame"],
+            ascending=[True, True, False, False],
             na_position="last",
         )
         .drop_duplicates(subset=["source_key"], keep="first")
-        .sort_values(["tmag", "n_cadences_in_frame"], ascending=[True, False], na_position="last")
+        .sort_values(["tmag", "n_cadences_in_spill_region", "n_cadences_in_frame"], ascending=[True, False, False], na_position="last")
         .reset_index(drop=True)
     )
     bright = deduped[deduped["tmag"].fillna(99.0) <= float(mag_limit)].copy().reset_index(drop=True)
@@ -241,7 +250,9 @@ def compute_crossers(
         "n_crossers": int(len(frame)),
         "n_unique_crossers": int(len(deduped)),
         "n_bright_crossers": int(len(bright)),
+        "n_spill_only_crossers": int(np.count_nonzero(~deduped["center_enters_frame"].astype(bool))),
         "bright_mag_limit": float(mag_limit),
+        "bbox_margin_pix": float(bbox_margin_pix),
         "late_feature_detector_x": late_feature_x,
         "late_feature_detector_y": late_feature_y,
         "late_feature_nearest_sources": nearest_feature.to_dict(orient="records"),

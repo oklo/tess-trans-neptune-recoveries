@@ -16,7 +16,8 @@ if str(SRC_DIR) not in sys.path:
 
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / ".mplconfig"))
 
-from kbo_tess.recovery import recover_from_local_files  # noqa: E402
+from kbo_tess.recovery import recover_from_local_files, resolve_track_coordinates  # noqa: E402
+from kbo_tess.shiftstack import apply_support_gate, stack_with_support  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interpolation", choices=("nearest", "linear"), default="linear", help="Shift interpolation mode.")
     parser.add_argument("--offset-grid-radius", type=float, default=1.0, help="Offset-search half-width in pixels.")
     parser.add_argument("--offset-grid-step", type=float, default=0.5, help="Offset-search step size in pixels.")
+    parser.add_argument(
+        "--support-fraction-min",
+        type=float,
+        default=0.0,
+        help="If > 0, mask stack pixels with support below this fraction of the maximum support.",
+    )
+    parser.add_argument(
+        "--support-frames-min",
+        type=float,
+        default=0.0,
+        help="If > 0, mask stack pixels with support below this many contributing frames.",
+    )
     parser.add_argument("--outdir", type=Path, default=PROJECT_ROOT / "outputs", help="Directory for derived plots.")
     return parser
 
@@ -56,25 +69,83 @@ def _image_limits(image):
     return float(vmin), float(vmax)
 
 
-def plot_heatmap(recovery_result: dict[str, object], output_path: Path) -> Path:
+def _support_gate_kwargs(args: argparse.Namespace) -> dict[str, float | None]:
+    return {
+        "min_support_fraction": float(args.support_fraction_min) if float(args.support_fraction_min) > 0 else None,
+        "min_support_frames": float(args.support_frames_min) if float(args.support_frames_min) > 0 else None,
+    }
+
+
+def _support_suffix(args: argparse.Namespace) -> str:
+    parts: list[str] = []
+    if float(args.support_fraction_min) > 0:
+        parts.append(f"supportfrac{str(args.support_fraction_min).replace('.', 'p')}")
+    if float(args.support_frames_min) > 0:
+        parts.append(f"supportn{str(args.support_frames_min).replace('.', 'p')}")
+    return ("_" + "_".join(parts)) if parts else ""
+
+
+def _build_support_aware_stacks(recovery_result: dict[str, object], args: argparse.Namespace) -> tuple[dict[str, object], dict[str, object]]:
+    residual_cube = recovery_result["residual_cube"]
+    aligned_ephem = recovery_result["aligned_ephemeris"]
+    x, y, _ = resolve_track_coordinates(aligned_ephem)
+    summary = recovery_result["summary"]
+    reference = (
+        float(summary["recovered_reference_pixel"]["x"]),
+        float(summary["recovered_reference_pixel"]["y"]),
+    )
+    nominal = stack_with_support(
+        residual_cube,
+        x,
+        y,
+        method="mean",
+        interpolation=args.interpolation,
+        reference=reference,
+        integer_shifts=False,
+    )
+    best = stack_with_support(
+        residual_cube,
+        x + float(summary["best_dx"]),
+        y + float(summary["best_dy"]),
+        method="mean",
+        interpolation=args.interpolation,
+        reference=reference,
+        integer_shifts=False,
+    )
+    return nominal, best
+
+
+def plot_heatmap(recovery_result: dict[str, object], output_path: Path, args: argparse.Namespace) -> Path:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
 
-    nominal_stack = np.asarray(recovery_result["nominal_stack"], dtype=float)
-    best_stack = np.asarray(recovery_result["offset_search"]["best"]["stack"], dtype=float)
+    nominal_support, best_support = _build_support_aware_stacks(recovery_result, args)
+    nominal_stack = np.asarray(nominal_support["stack"], dtype=float)
+    best_stack = np.asarray(best_support["stack"], dtype=float)
+    gate_kwargs = _support_gate_kwargs(args)
+    gate_active = any(value is not None for value in gate_kwargs.values())
+    if gate_active:
+        nominal_gate = apply_support_gate(nominal_stack, nominal_support["support_map"], **gate_kwargs)
+        best_gate = apply_support_gate(best_stack, best_support["support_map"], **gate_kwargs)
+        nominal_stack = np.asarray(nominal_gate["stack"], dtype=float)
+        best_stack = np.asarray(best_gate["stack"], dtype=float)
+        nominal_threshold = float(nominal_gate["threshold_frames"])
+    else:
+        nominal_threshold = 0.0
     summary = recovery_result["summary"]
     ref = summary["recovered_reference_pixel"]
+    title_suffix = f"\nSupport gate >= {nominal_threshold:.1f} frames" if gate_active else ""
 
     figure, axes = plt.subplots(1, 2, figsize=(10, 4.5), constrained_layout=True)
     panels = [
-        (axes[0], nominal_stack, f"Nominal Stack\nS/N={summary['nominal_score']:.2f}"),
+        (axes[0], nominal_stack, f"Nominal Stack\nS/N={summary['nominal_score']:.2f}{title_suffix}"),
         (
             axes[1],
             best_stack,
-            f"Best Stack\nS/N={summary['best_score']:.2f} at ({summary['best_dx']:.1f},{summary['best_dy']:.1f})",
+            f"Best Stack\nS/N={summary['best_score']:.2f} at ({summary['best_dx']:.1f},{summary['best_dy']:.1f}){title_suffix}",
         ),
     ]
     for axis, image, title in panels:
@@ -133,7 +204,7 @@ def main() -> int:
         offset_grid_step=args.offset_grid_step,
     )
     prefix = _prefix(args)
-    heatmap_path = plot_heatmap(recovery, args.outdir / f"{prefix}_heatmap.png")
+    heatmap_path = plot_heatmap(recovery, args.outdir / f"{prefix}{_support_suffix(args)}_heatmap.png", args)
     growth_path = plot_growth(recovery, args.outdir / f"{prefix}_snr_accumulation.png")
 
     summary = recovery["summary"]

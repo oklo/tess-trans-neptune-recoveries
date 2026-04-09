@@ -157,6 +157,47 @@ def stack_with_support(
     }
 
 
+def apply_support_gate(
+    stack: Any,
+    support_map: Any,
+    min_support_fraction: float | None = None,
+    min_support_frames: float | None = None,
+    fill_value: float = float("nan"),
+) -> dict[str, Any]:
+    """Mask stack pixels that do not meet a minimum support threshold.
+
+    This is intended for support-aware diagnostics so sparse edge artifacts do
+    not dominate visual inspection or peak finding.
+    """
+
+    numpy = _require_numpy()
+    image = numpy.asarray(stack, dtype=float)
+    support = numpy.asarray(support_map, dtype=float)
+    if image.shape != support.shape:
+        raise ValueError(f"`stack` and `support_map` must have matching shapes; got {image.shape!r} and {support.shape!r}.")
+
+    max_support = float(numpy.nanmax(support)) if support.size else 0.0
+    threshold = 0.0
+    if min_support_fraction is not None:
+        if min_support_fraction < 0:
+            raise ValueError(f"`min_support_fraction` must be non-negative; got {min_support_fraction}.")
+        threshold = max(threshold, float(min_support_fraction) * max_support)
+    if min_support_frames is not None:
+        if min_support_frames < 0:
+            raise ValueError(f"`min_support_frames` must be non-negative; got {min_support_frames}.")
+        threshold = max(threshold, float(min_support_frames))
+
+    keep_mask = support >= threshold
+    gated = numpy.asarray(image, dtype=float).copy()
+    gated[~keep_mask] = float(fill_value)
+    return {
+        "stack": gated,
+        "keep_mask": keep_mask,
+        "threshold_frames": float(threshold),
+        "max_support": max_support,
+    }
+
+
 def stack_along_track(
     cube: Any,
     x: Iterable[float],
