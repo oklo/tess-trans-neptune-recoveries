@@ -1,0 +1,67 @@
+Continue working in ~/src/kbo-tess.
+
+Please stay tightly focused on the Sedna Sector 5 expected-flux question. Do not switch to a broad new recovery run, and do not return to Pluto except as a calibration reference.
+
+First inspect briefly:
+- git status / current branch
+- notes/2026-04-09_sedna_local_window_flux_report.txt
+- scripts/plot_nominal_path_pixel_timeseries.py
+- scripts/plot_nominal_path_local_windows.py
+- outputs/sedna_multisector/sector5_full_nominal_path_pixel_timeseries_masked_detrended.png
+- outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended.png
+- outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended.csv
+- outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended_summary.txt
+
+Current state to preserve
+- We are working on Sedna Sector 5 only for this pass.
+- The latest local-window diagnostic is aligned on the nominal pixel-crossing times.
+- It uses:
+  - automatic ramp mask from the raw 21x21 cutout median
+  - 2 extra manual cadence exclusions:
+    - 1449.9956542677933 BTJD
+    - 1462.0995072339913 BTJD
+  - per-trace linear detrending
+  - local windows centered on the nominal Sedna crossing time for each path pixel
+  - latest window width = 4.5 x average pixel residence time = 55.41185729528934 h
+  - bottom panel = summed aligned detrended traces on a 0.5 h grid
+- Latest plot:
+  - outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended.png
+
+What needs to be worked out
+- We want the expected Sedna contribution on the bottom summed panel, ideally as a computed curve.
+- But do NOT carry out the full analysis or write code that runs a heavy new science workflow in this pass.
+- Instead, derive the correct plan and identify any subtle pitfalls.
+
+Please answer these questions carefully
+1. What is the correct mathematical object we should compare to the bottom panel?
+   - The bottom panel is not raw flux.
+   - It is the sum of aligned per-pixel traces after masking and linear detrending.
+   - Spell out the exact forward operator that turns a physical Sedna source into that plotted curve.
+
+2. How should Sedna’s total expected detector flux be estimated?
+   - TESS-band magnitude vs V-band
+   - whether a bracket such as T = V, V - 0.3, V - 0.5 is a sensible first pass
+   - whether cadence integration time or exposure normalization matters in the current units
+
+3. How should the per-pixel model be built?
+   - cadence-by-cadence detector position
+   - PRF/PSF projection into the relevant detector pixels
+   - use of the same nominal path-pixel set as the observed diagnostic
+
+4. How should the detrending be handled?
+   - Is it acceptable to fit and subtract a line from the model-only per-pixel traces?
+   - Or do we need a more careful linear-operator view to match what the plotted data transformation is doing?
+   - Be explicit here; this is the main subtlety.
+
+5. What should the final product look like?
+   - observed bottom summed curve
+   - one or more expected Sedna model curves in the same units
+   - any uncertainty band or bracketing that should be shown
+
+Deliverable for this pass
+- a concise written implementation plan only
+- list the exact inputs, transformations, and outputs
+- call out the most dangerous ways this calculation could be done incorrectly
+- do not run the full expected-flux analysis yet
+
+Please keep the answer conservative and technically precise.

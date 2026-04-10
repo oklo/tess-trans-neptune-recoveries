@@ -1,0 +1,75 @@
+Sedna Sector 5 Local-Window Diagnostic Report
+2026-04-09
+
+What was added
+- A reusable path-pixel time-series script:
+  - scripts/plot_nominal_path_pixel_timeseries.py
+- A reusable local-window alignment script with a summed bottom panel:
+  - scripts/plot_nominal_path_local_windows.py
+
+Latest Sedna diagnostic products
+- Full detrended path-pixel view:
+  - outputs/sedna_multisector/sector5_full_nominal_path_pixel_timeseries_masked_detrended.png
+- Aligned local-window view with summed bottom panel:
+  - outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended.png
+- Matching CSV for the local-window plot:
+  - outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended.csv
+- Matching summary:
+  - outputs/sedna_multisector/sector5_full_nominal_path_local_windows_detrended_summary.txt
+
+Current plotting choices for Sedna Sector 5
+- Base automatic ramp mask from the raw 21x21 cutout median:
+  - running-median window = 49 cadences
+  - threshold = median(residual) + 5 * 1.4826 * MAD
+- Extra manual cadence exclusions to remove the strongest remaining stragglers:
+  - 1449.9956542677933 BTJD
+  - 1462.0995072339913 BTJD
+- Total removed cadences:
+  - 27 of 1086
+- Each detector-pixel trace is linearly detrended before plotting.
+- Local windows are centered on Sedna’s nominal crossing time for each path pixel.
+- Latest local-window plot uses:
+  - window width = 4.5 x average pixel residence time
+  - actual width = 55.41185729528934 hours
+  - bottom panel = summed aligned detrended traces on a 0.5 hour grid
+  - bottom panel includes a horizontal zero line
+
+Interpretation of the recent Sedna figures
+- The original full-length path-pixel plot showed a strong shared pre-1450 hump that was too large to be Sedna.
+- Quantitatively, that feature behaves like a common-mode cutout-wide background excursion, not a moving-source packet.
+- After the 2 extra cadence cuts and per-trace linear detrending, the local-window plot is much easier to interpret.
+- The bottom summed panel is visually suggestive, but it is still only a diagnostic. We have not yet computed the expected Sedna contribution in the same transformed units.
+
+Pluto context retained in parallel
+- The analogous Pluto path-pixel plot on the masked full-duration bundle showed an obvious moving source packet.
+- A wider hard time cut of 3813.70 -> 3817.60 BTJD cleaned the surviving full-duration Pluto common-mode excursion.
+- That stricter Pluto run still yielded a compact central catalog-masked nominal stack:
+  - outputs/pluto_catalog_mask_stack_3817p60/pluto_sector92_cam2_ccd1_catalog_mask_nominal_stack_supportn20p0_heatmap.png
+
+Plan for estimating the expected Sedna curve on the bottom panel
+- Goal:
+  - compute the expected summed curve in the same units and with the same processing as the observed bottom panel
+- Correct forward-model ingredients:
+  1. Use Sedna’s ephemeris and detector coordinates for Sector 5 at every kept cadence.
+  2. Convert Sedna’s brightness into an expected total TESS count rate.
+  3. Project that total source rate through the TESS PRF/PSF into the relevant detector pixels cadence by cadence.
+  4. Extract the expected contribution for the same nominal path-pixel set used in the diagnostic plot.
+  5. Apply the same cadence mask:
+     - automatic ramp mask
+     - the 2 manual extra cadence cuts
+  6. Apply the same per-pixel transformation:
+     - if the displayed trace is linearly detrended, apply the same linear detrend operator to the model trace for that pixel
+  7. Use the same crossing-time alignment and the same local-window width.
+  8. Bin/sum the model traces on the same 0.5 hour grid used in the bottom panel.
+- Important subtlety:
+  - the expected curve should not be a naive total-flux estimate
+  - it must be passed through the same plotting operator as the observed traces, or the comparison will be misleading
+- Practical first pass:
+  - compute a family of curves for a small bracket of plausible Sedna TESS-band magnitudes rather than pretending the Tmag is exactly known
+  - for example: T = V, V - 0.3, V - 0.5
+- Deliverable for the next pass:
+  - an observed bottom summed curve with one or more overplotted expected Sedna model curves in the same units
+
+Current caution
+- Do not interpret the present summed bottom panel as a flux recovery yet.
+- The next trustworthy step is the matched forward-model curve, not another purely qualitative plot.

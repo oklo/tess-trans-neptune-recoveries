@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Experiment: mask bright catalog sources in raw moving-target frames, subtract a simple background, and stack."""
+"""Experiment: mask or model-subtract catalog sources in raw moving-target frames, subtract a simple background, and stack."""
 
 from __future__ import annotations
 
@@ -27,6 +27,11 @@ import pandas as pd
 from kbo_tess.ephem import load_ephemeris_csv
 from kbo_tess.shiftstack import apply_support_gate, score_stack, stack_with_support
 from kbo_tess.tutorial_benchmark import _configure_benchmark_environment, _ephem_for_tess_asteroids, _import_tess_asteroids
+
+try:
+    import lkprf
+except ImportError:  # pragma: no cover - optional at import time, exercised in runtime path
+    lkprf = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cutout-size", type=int, default=21)
     parser.add_argument("--central-box-size", type=int, default=5)
     parser.add_argument("--mag-limit", type=float, default=15.5)
+    parser.add_argument(
+        "--bright-mask-mag-limit",
+        type=float,
+        default=13.0,
+        help="Sources brighter than this Tmag are hard-masked instead of PRF-subtracted.",
+    )
+    parser.add_argument(
+        "--subtract-faint-sources",
+        action="store_true",
+        help="Subtract PRF models for non-target catalog sources that are fainter than --bright-mask-mag-limit and brighter than --mag-limit.",
+    )
     parser.add_argument("--interpolation", choices=("nearest", "linear"), default="linear")
     parser.add_argument("--support-fraction-min", type=float, default=0.0)
     parser.add_argument("--support-frames-min", type=float, default=0.0)
@@ -117,6 +133,12 @@ def mask_radius_from_tmag(tmag: float) -> float:
     return float(np.clip(1.25 + 0.50 * (15.5 - float(tmag)), 1.25, 4.0))
 
 
+def tmag_to_flux_rate(tmag: float) -> float:
+    if not np.isfinite(tmag):
+        return 0.0
+    return float(10 ** ((20.44 - float(tmag)) / 2.5))
+
+
 def center_box_mask(shape: tuple[int, int], box_size: int) -> np.ndarray:
     ny, nx = shape
     cx = nx // 2
@@ -127,22 +149,75 @@ def center_box_mask(shape: tuple[int, int], box_size: int) -> np.ndarray:
     return mask
 
 
+def build_source_categories(
+    bright_sources: pd.DataFrame,
+    bright_mask_mag_limit: float,
+    subtract_faint_sources: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    sources = bright_sources.copy()
+    if "mask_radius_pix" not in sources:
+        sources["mask_radius_pix"] = sources["tmag"].apply(mask_radius_from_tmag)
+    sources["model_flux_rate"] = sources["tmag"].apply(tmag_to_flux_rate)
+    hard_mask = sources[sources["tmag"].fillna(-np.inf) <= float(bright_mask_mag_limit)].copy().reset_index(drop=True)
+    if subtract_faint_sources:
+        subtract = sources[sources["tmag"].fillna(np.inf) > float(bright_mask_mag_limit)].copy().reset_index(drop=True)
+    else:
+        subtract = sources.iloc[0:0].copy().reset_index(drop=True)
+    return hard_mask, subtract
+
+
+def subtract_catalog_models(
+    frame: np.ndarray,
+    detector_origin: tuple[float, float],
+    shape: tuple[int, int],
+    subtract_sources: pd.DataFrame,
+    prf: Any,
+    overlap_margin_pix: float = 4.0,
+) -> tuple[np.ndarray, float, int]:
+    if subtract_sources.empty:
+        return np.asarray(frame, dtype=float).copy(), 0.0, 0
+
+    origin_row, origin_col = int(detector_origin[0]), int(detector_origin[1])
+    ny, nx = shape
+    source_x = subtract_sources["detector_x"].astype(float).to_numpy()
+    source_y = subtract_sources["detector_y"].astype(float).to_numpy()
+    source_flux = subtract_sources["model_flux_rate"].astype(float).to_numpy()
+    inside = (
+        (source_x >= origin_col - float(overlap_margin_pix))
+        & (source_x <= origin_col + float(nx - 1) + float(overlap_margin_pix))
+        & (source_y >= origin_row - float(overlap_margin_pix))
+        & (source_y <= origin_row + float(ny - 1) + float(overlap_margin_pix))
+        & np.isfinite(source_flux)
+        & (source_flux > 0)
+    )
+    if not np.any(inside):
+        return np.asarray(frame, dtype=float).copy(), 0.0, 0
+
+    targets = [(float(row), float(col)) for row, col in zip(source_y[inside], source_x[inside], strict=False)]
+    models = prf.evaluate(targets=targets, origin=(origin_row, origin_col), shape=shape)
+    scaled = models * source_flux[inside][:, None, None]
+    model_sum = np.sum(scaled, axis=0)
+    return np.asarray(frame, dtype=float) - model_sum, float(np.nansum(model_sum)), int(np.count_nonzero(inside))
+
+
 def process_cube(
     raw_cube: np.ndarray,
     corner1: np.ndarray,
     corner2: np.ndarray,
-    bright_sources: pd.DataFrame,
+    hard_mask_sources: pd.DataFrame,
     central_mask: np.ndarray,
+    subtract_sources: pd.DataFrame | None = None,
+    prf: Any | None = None,
 ) -> tuple[np.ndarray, pd.DataFrame, dict[str, Any]]:
     n_frames, ny, nx = raw_cube.shape
     yy, xx = np.indices((ny, nx), dtype=float)
 
-    source_x = bright_sources["detector_x"].astype(float).to_numpy()
-    source_y = bright_sources["detector_y"].astype(float).to_numpy()
-    mask_radius = bright_sources["mask_radius_pix"].astype(float).to_numpy()
+    source_x = hard_mask_sources["detector_x"].astype(float).to_numpy()
+    source_y = hard_mask_sources["detector_y"].astype(float).to_numpy()
+    mask_radius = hard_mask_sources["mask_radius_pix"].astype(float).to_numpy()
     local_x = source_x[None, :] - corner1[:, None]
     local_y = source_y[None, :] - corner2[:, None]
-    max_radius = float(np.nanmax(mask_radius))
+    max_radius = float(np.nanmax(mask_radius)) if len(mask_radius) else 0.0
     inside = (
         (local_x >= -max_radius)
         & (local_x <= float(nx - 1) + max_radius)
@@ -154,6 +229,18 @@ def process_cube(
     rows: list[dict[str, Any]] = []
     for index in range(n_frames):
         frame = np.asarray(raw_cube[index], dtype=float)
+        modeled_flux = 0.0
+        n_subtracted_sources = 0
+        if subtract_sources is not None and not subtract_sources.empty:
+            if prf is None:
+                raise ValueError("PRF model must be provided when subtract_sources is not empty.")
+            frame, modeled_flux, n_subtracted_sources = subtract_catalog_models(
+                frame,
+                detector_origin=(int(round(float(corner2[index]))), int(round(float(corner1[index])))),
+                shape=(ny, nx),
+                subtract_sources=subtract_sources,
+                prf=prf,
+            )
         mask = np.zeros((ny, nx), dtype=bool)
         for source_index in np.flatnonzero(inside[index]):
             rr = np.hypot(xx - float(local_x[index, source_index]), yy - float(local_y[index, source_index]))
@@ -171,6 +258,8 @@ def process_cube(
                 "background_mean": background_mean,
                 "n_masked_pixels": int(np.count_nonzero(mask)),
                 "n_background_pixels": int(np.count_nonzero(background_mask)),
+                "n_subtracted_sources": int(n_subtracted_sources),
+                "subtracted_model_flux_sum": float(modeled_flux),
             }
         )
 
@@ -181,6 +270,8 @@ def process_cube(
         "mean_background_pixels_per_frame": float(np.mean([row["n_background_pixels"] for row in rows])),
         "mean_background_mean": float(np.mean([row["background_mean"] for row in rows])),
         "median_background_mean": float(np.median([row["background_mean"] for row in rows])),
+        "mean_subtracted_sources_per_frame": float(np.mean([row["n_subtracted_sources"] for row in rows])),
+        "mean_subtracted_model_flux_sum": float(np.mean([row["subtracted_model_flux_sum"] for row in rows])),
     }
     return processed, pd.DataFrame(rows), summary
 
@@ -232,10 +323,15 @@ def main() -> int:
 
     prefix = f"{str(args.target).strip().lower()}_sector{int(args.sector)}_cam{int(args.camera)}_ccd{int(args.ccd)}"
 
-    bright = pd.read_csv(args.bright_csv)
-    bright = bright[bright["tmag"].fillna(99.0) <= float(args.mag_limit)].copy().reset_index(drop=True)
-    bright["mask_radius_pix"] = bright["tmag"].apply(mask_radius_from_tmag)
-    bright.to_csv(args.outdir / f"{prefix}_catalog_mask_sources.csv", index=False)
+    sources = pd.read_csv(args.bright_csv)
+    sources = sources[sources["tmag"].fillna(99.0) <= float(args.mag_limit)].copy().reset_index(drop=True)
+    hard_mask_sources, subtract_sources = build_source_categories(
+        sources,
+        bright_mask_mag_limit=float(args.bright_mask_mag_limit),
+        subtract_faint_sources=bool(args.subtract_faint_sources),
+    )
+    catalog_sources_path = args.outdir / f"{prefix}_catalog_mask_sources.csv"
+    sources.to_csv(catalog_sources_path, index=False)
 
     ephem = select_detector_ephem(args.ephem_csv, args.target, args.sector, args.camera, args.ccd)
     raw_cube, raw_time = build_raw_flux_cube(ephem, shape=(int(args.cutout_size), int(args.cutout_size)))
@@ -243,12 +339,19 @@ def main() -> int:
     raw_matched = raw_cube[match_idx]
 
     central_mask = center_box_mask((int(args.cutout_size), int(args.cutout_size)), box_size=int(args.central_box_size))
+    prf = None
+    if not subtract_sources.empty:
+        if lkprf is None:
+            raise ImportError("`lkprf` is required for catalog source subtraction.")
+        prf = lkprf.TESSPRF(camera=int(args.camera), ccd=int(args.ccd))
     processed_cube, frame_table, processing_summary = process_cube(
         raw_matched,
         corner1=corner1,
         corner2=corner2,
-        bright_sources=bright,
+        hard_mask_sources=hard_mask_sources,
         central_mask=central_mask,
+        subtract_sources=subtract_sources,
+        prf=prf,
     )
     frame_table.to_csv(args.outdir / f"{prefix}_catalog_mask_frame_backgrounds.csv", index=False)
 
@@ -290,7 +393,11 @@ def main() -> int:
         "ccd": int(args.ccd),
         "bundle_npz": str(args.bundle_npz),
         "bright_csv": str(args.bright_csv),
-        "n_bright_sources_masked": int(len(bright)),
+        "n_catalog_sources_used": int(len(sources)),
+        "n_hard_mask_sources": int(len(hard_mask_sources)),
+        "n_subtracted_sources": int(len(subtract_sources)),
+        "bright_mask_mag_limit": float(args.bright_mask_mag_limit),
+        "subtract_faint_sources": bool(args.subtract_faint_sources),
         "processing_summary": processing_summary,
         "stack_center_aperture_snr": center_score,
         "stack_peak_x": int(peak_x),
@@ -298,7 +405,7 @@ def main() -> int:
         "stack_peak_value": float(np.nanmax(stack)),
         "support_threshold_frames": gated_threshold,
         "heatmap_png": str(heatmap_path),
-        "catalog_mask_sources_csv": str(args.outdir / f"{prefix}_catalog_mask_sources.csv"),
+        "catalog_mask_sources_csv": str(catalog_sources_path),
         "frame_backgrounds_csv": str(args.outdir / f"{prefix}_catalog_mask_frame_backgrounds.csv"),
         "bundle_metadata_subset": {
             "loader_bg_method": metadata.get("loader_bg_method"),
@@ -309,13 +416,18 @@ def main() -> int:
     summary_path = args.outdir / f"{prefix}_catalog_mask_stack_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
-    print(f"Masked bright sources: {len(bright)}")
-    print(
-        "Mask radii span "
-        f"{bright['mask_radius_pix'].min():.2f} -> {bright['mask_radius_pix'].max():.2f} px "
-        f"for Tmag <= {args.mag_limit:.1f}"
-    )
+    print(f"Catalog sources used: {len(sources)}")
+    print(f"Hard-masked sources: {len(hard_mask_sources)}")
+    print(f"PRF-subtracted sources: {len(subtract_sources)}")
+    if len(hard_mask_sources):
+        print(
+            "Mask radii span "
+            f"{hard_mask_sources['mask_radius_pix'].min():.2f} -> {hard_mask_sources['mask_radius_pix'].max():.2f} px "
+            f"for Tmag <= {args.bright_mask_mag_limit:.1f}"
+        )
     print(f"Mean masked pixels per frame: {processing_summary['mean_masked_pixels_per_frame']:.2f}")
+    print(f"Mean subtracted sources per frame: {processing_summary['mean_subtracted_sources_per_frame']:.2f}")
+    print(f"Mean modeled flux removed per frame: {processing_summary['mean_subtracted_model_flux_sum']:.2f}")
     print(f"Mean subtracted background level: {processing_summary['mean_background_mean']:.2f}")
     print(f"Center aperture S/N on final stack: {center_score:.3f}")
     print(f"Final stack peak: ({peak_x}, {peak_y}) value={float(np.nanmax(stack)):.3f}")
