@@ -61,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mask-window", type=int, default=49)
     parser.add_argument("--mask-sigma", type=float, default=5.0)
     parser.add_argument(
+        "--mask-csv",
+        type=Path,
+        default=None,
+        help="Optional precomputed per-cadence mask CSV with a `keep` column.",
+    )
+    parser.add_argument(
         "--extra-mask-times",
         type=float,
         nargs="*",
@@ -396,7 +402,21 @@ def main() -> int:
     keep, med, _running, mad, threshold = compute_ramp_mask(raw_matched, args.mask_window, args.mask_sigma)
     extra_mask_times = tuple(float(value) for value in args.extra_mask_times)
     extra_mask_ranges = tuple((float(start), float(stop)) for start, stop in args.extra_mask_ranges)
-    keep = apply_extra_mask(bundle_time, keep, extra_mask_times, extra_mask_ranges)
+    mask_source = "simple"
+    if args.mask_csv is not None:
+        mask_df = pd.read_csv(args.mask_csv)
+        if "keep" not in mask_df.columns:
+            raise ValueError(f"{args.mask_csv} does not contain a `keep` column.")
+        keep = mask_df["keep"].to_numpy(dtype=bool)
+        if len(keep) != len(bundle_time):
+            raise ValueError(
+                f"{args.mask_csv} keep length {len(keep)} does not match bundle length {len(bundle_time)}."
+            )
+        extra_mask_times = ()
+        extra_mask_ranges = ()
+        mask_source = str(args.mask_csv)
+    else:
+        keep = apply_extra_mask(bundle_time, keep, extra_mask_times, extra_mask_ranges)
     detrend_degree = int(args.detrend_degree) if args.detrend_degree is not None else (1 if bool(args.detrend_linear) else 0)
 
     rows = build_series_rows(
@@ -450,6 +470,7 @@ def main() -> int:
         f"distinct_path_pixels={len(path_pixels)}",
         f"cadences_total={len(keep)}",
         f"cadences_removed={int(np.count_nonzero(~keep))}",
+        f"mask_source={mask_source}",
         "extra_mask_times=" + ",".join(f"{value:.12f}" for value in extra_mask_times),
         "extra_mask_ranges="
         + ",".join(f"[{start:.12f},{stop:.12f}]" for start, stop in extra_mask_ranges),

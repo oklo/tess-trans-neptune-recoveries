@@ -1,0 +1,146 @@
+Sedna Sector 71 automatic cadence masking report
+Date: 2026-04-10
+
+Context
+- Target: Sedna
+- Sector: 71
+- Camera: 2
+- CCD: 4
+- Bundle:
+  outputs/sedna_multisector/sector71/sedna_sector71_cam2_ccd4_cube_bundle.npz
+- Manual reference mask for the current diagnostic workflow:
+  < 3237.0
+  3245.0 -> 3250.0
+- Manual reference final plot:
+  outputs/sedna_multisector/sector71_nominal_path_local_windows_masked.png
+
+Assessment comparison
+- The chat-instance masking spec was strongly aligned with the working local intuition:
+  target-excluded common-mode diagnostics
+  physical-time windows
+  hysteretic grow-from-seeds logic
+  explicit edge handling
+  machine-readable interval outputs
+- The main improvement that came from the live implementation tests was:
+  do not allow slope alone to create interior intervals
+  broad-interval masking should be duration-limited so it does not harvest every short wiggle
+  trailing-edge blocks should require stronger supporting evidence than the leading-edge catastrophe in Sector 71
+
+Implemented automatic mask design
+Stage A: spike rejection
+- Keep the existing simple cutout-median spike rejection.
+
+Stage B: broad-interval detector
+- Diagnostics are computed from the raw moving cutout.
+- Target exclusion uses a central 5x5 box around the predicted local target position.
+- Path context uses a central 9x9 minus 5x5 ring around the same moving target position.
+- Diagnostics:
+  m_all
+  m_outer
+  q90_outer
+  s_outer
+  m_path
+  d_outer
+- Slow baselines are 24 h rolling medians in physical time.
+- Slope smoothing uses 1 h rolling medians.
+- Standardized residuals use robust sigma = 1.4826 * MAD.
+
+Important implementation decisions
+- Slope is only allowed to help seed an interval when broad-support diagnostics are already elevated.
+- Broad grow support is:
+  z_outer > grow_z
+  or z_path > grow_z
+  or (z_q90 > grow_z and z_scatter > grow_z)
+- Minimum broad-interval duration was raised to 6 h.
+- Edge intervals require:
+  either edge grow fraction > 0.5
+  or (edge z_outer/z_path > 3 and edge grow fraction > 0.2)
+
+Final tuned Sector 71 parameters
+- mask_mode = common_mode_v1
+- target_box_size = 5
+- path_box_size = 9
+- baseline_hours = 24
+- slope_smooth_hours = 1
+- seed_z_outer = 4
+- seed_z_path = 4
+- seed_z_q90 = 3
+- seed_z_scatter = 3
+- seed_z_slope = 4
+- grow_z = 2
+- min_interval_hours = 6
+- merge_gap_hours = 10
+- interval_pad_hours = 6
+- edge_window_hours = 12
+- edge_reference_hours = 24
+- edge_release_hours = 6
+- edge_release_z = 1.5
+
+Final tuned automatic-mask outputs
+- Path-pixel plot:
+  outputs/sedna_multisector/sector71_nominal_path_pixel_timeseries_automask_tuned.png
+- Path-pixel CSV:
+  outputs/sedna_multisector/sector71_nominal_path_pixel_timeseries_automask_tuned.csv
+- Mask summary:
+  outputs/sedna_multisector/sector71_automask_tuned_summary.txt
+- Per-cadence diagnostics:
+  outputs/sedna_multisector/sector71_automask_tuned_diagnostics.csv
+- Interval JSON:
+  outputs/sedna_multisector/sector71_automask_tuned_intervals.json
+- Final quadratic-detrended local-window plot:
+  outputs/sedna_multisector/sector71_nominal_path_local_windows_automask_tuned.png
+- Final local-window CSV:
+  outputs/sedna_multisector/sector71_nominal_path_local_windows_automask_tuned.csv
+- Final local-window summary:
+  outputs/sedna_multisector/sector71_nominal_path_local_windows_automask_tuned_summary.txt
+
+Recovered automatic intervals
+- 3234.500739 -> 3236.686054
+- 3244.209575 -> 3245.017476
+- 3246.019827 -> 3250.906588
+
+Interpretation of the recovered intervals
+- The left-edge contamination is recovered well and remains clearly automatic.
+- The main broad bad block is recovered well, though it starts about 0.8 d later than the hand cut and adds a short shoulder interval just before 3245.
+- The right-edge false positive present in earlier automatic attempts was successfully removed.
+
+Coverage comparison
+- Manual cadence removals: 3153 / 10095
+- Tuned automatic cadence removals: 3320 / 10095
+- Manual path pixels with no centered surviving cadences: 13
+- Tuned automatic path pixels with no centered surviving cadences: 13
+
+Quadratic-detrended bottom summed-curve comparison
+Metric definition
+- Bin width = 0.5 h
+- peak measured within |delta-T| <= 8 h
+- baseline estimated over 12 h <= |delta-T| <= 22 h
+- contrast_snr = (peak - baseline_median) / baseline_rms
+
+Manual mask
+- center_sum = 109.879
+- peak_sum = 124.105 at delta-T = -2.001 h
+- baseline_median = 4.213
+- baseline_rms = 17.410
+- contrast_snr = 6.886
+
+Tuned automatic mask
+- center_sum = 82.943
+- peak_sum = 120.013 at delta-T = +1.110 h
+- baseline_median = 1.498
+- baseline_rms = 19.089
+- contrast_snr = 6.209
+
+Conclusion
+- The tuned automatic mask is not quite as clean as the current hand mask, but it is close enough to be scientifically encouraging.
+- It preserves a strong quadratic-detrended Sedna peak in the bottom summed curve.
+- It reproduces the key broad intervals without manual time-range decree.
+- The main remaining gap relative to the hand cut is the start shoulder of the 3245-3250 contamination block.
+
+Recommended next step
+- Apply the same automatic masking workflow to Sedna Sector 5 and compare:
+  interval overlap
+  cadence retention
+  path-pixel coverage
+  final local-window contrast_snr
+- If Sector 5 also behaves sensibly, promote the automatic mask to the standard known-KBO diagnostic workflow.
