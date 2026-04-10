@@ -67,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=(1449.9956542677933, 1462.0995072339913),
         help="Additional exact BTJD cadences to exclude after the automatic ramp mask.",
     )
+    parser.add_argument(
+        "--extra-mask-ranges",
+        type=float,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("START", "STOP"),
+        help="Additional inclusive BTJD time ranges to exclude after the automatic ramp mask.",
+    )
     parser.add_argument("--window-multiplier", type=float, default=4.5)
     parser.add_argument("--sum-bin-hours", type=float, default=0.5)
     parser.add_argument("--label-every", type=int, default=3)
@@ -78,17 +87,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--marker-alpha", type=float, default=0.40)
     parser.add_argument("--marker-size", type=float, default=24.0)
     parser.add_argument("--offset-scale", type=float, default=(1.0 / 3.0) * 0.5)
-    parser.add_argument("--detrend-linear", action="store_true", default=True)
+    parser.add_argument("--bootstrap-draws", type=int, default=0)
+    parser.add_argument("--bootstrap-seed", type=int, default=0)
+    parser.add_argument("--bootstrap-errorbar-stride", type=int, default=4)
+    parser.add_argument(
+        "--detrend-degree",
+        type=int,
+        default=None,
+        help="Polynomial detrend degree. Overrides --detrend-linear / --no-detrend-linear.",
+    )
+    parser.add_argument("--detrend-linear", dest="detrend_linear", action="store_true")
+    parser.add_argument("--no-detrend-linear", dest="detrend_linear", action="store_false")
+    parser.set_defaults(detrend_linear=True)
     return parser
 
 
-def apply_extra_mask(bundle_time: np.ndarray, keep: np.ndarray, extra_mask_times: tuple[float, ...]) -> np.ndarray:
+def apply_extra_mask(
+    bundle_time: np.ndarray,
+    keep: np.ndarray,
+    extra_mask_times: tuple[float, ...],
+    extra_mask_ranges: tuple[tuple[float, float], ...],
+) -> np.ndarray:
     keep = keep.copy()
     for value in extra_mask_times:
         nearest = int(np.nanargmin(np.abs(bundle_time - value)))
         if abs(float(bundle_time[nearest]) - value) > 1.0 / 86400.0:
             raise ValueError(f"No cadence matched requested extra mask time {value:.12f} within 1 second.")
         keep[nearest] = False
+    for start, stop in extra_mask_ranges:
+        lo = min(start, stop)
+        hi = max(start, stop)
+        keep[(bundle_time >= lo) & (bundle_time <= hi)] = False
     return keep
 
 
@@ -163,6 +192,50 @@ def summed_curve(df: pd.DataFrame, half_window_hours: float, bin_width_hours: fl
     return x_grid, sum_flux
 
 
+def row_sum_vectors(
+    rows: list[dict[str, object]],
+    x_grid: np.ndarray,
+    bin_width_hours: float,
+) -> np.ndarray:
+    if not rows:
+        return np.zeros((0, len(x_grid)), dtype=float)
+    left_edge = float(x_grid[0] - 0.5 * bin_width_hours)
+    n_bins = len(x_grid)
+    vectors = np.zeros((len(rows), n_bins), dtype=float)
+    for i, row in enumerate(rows):
+        x = np.asarray(row["x"], dtype=float)
+        y = np.asarray(row["y"], dtype=float)
+        finite = np.isfinite(x) & np.isfinite(y)
+        if not np.any(finite):
+            continue
+        x = x[finite]
+        y = y[finite]
+        indices = np.floor((x - left_edge) / float(bin_width_hours)).astype(int)
+        valid = (indices >= 0) & (indices < n_bins)
+        if not np.any(valid):
+            continue
+        np.add.at(vectors[i], indices[valid], y[valid])
+    return vectors
+
+
+def bootstrap_sum_curve(
+    row_vectors: np.ndarray,
+    draws: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if draws <= 0 or row_vectors.size == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    rng = np.random.default_rng(seed)
+    n_rows = row_vectors.shape[0]
+    boot = np.empty((draws, row_vectors.shape[1]), dtype=float)
+    for i in range(draws):
+        sample_idx = rng.integers(0, n_rows, size=n_rows)
+        boot[i] = np.sum(row_vectors[sample_idx], axis=0)
+    low = np.nanpercentile(boot, 16.0, axis=0)
+    high = np.nanpercentile(boot, 84.0, axis=0)
+    return low, high
+
+
 def plot_local_windows(
     df: pd.DataFrame,
     out_png: Path,
@@ -182,6 +255,12 @@ def plot_local_windows(
     marker_size: float,
     offset_step: float,
     sum_bin_hours: float,
+    detrend_degree: int,
+    extra_mask_times: tuple[float, ...],
+    extra_mask_ranges: tuple[tuple[float, float], ...],
+    bootstrap_draws: int,
+    bootstrap_seed: int,
+    bootstrap_errorbar_stride: int,
 ) -> None:
     rows = []
     for order_index, group in df.groupby("order_index", sort=True):
@@ -198,6 +277,8 @@ def plot_local_windows(
 
     half_window_hours = window_width_hours / 2.0
     x_grid, sum_flux = summed_curve(df, half_window_hours=half_window_hours, bin_width_hours=sum_bin_hours)
+    row_vectors = row_sum_vectors(rows, x_grid=x_grid, bin_width_hours=sum_bin_hours)
+    boot_low, boot_high = bootstrap_sum_curve(row_vectors, draws=bootstrap_draws, seed=bootstrap_seed)
 
     fig_h = max(12.0, 0.16 * len(rows) + 4.0)
     fig = plt.figure(figsize=(13, fig_h), constrained_layout=True)
@@ -232,16 +313,58 @@ def plot_local_windows(
     ax_top.tick_params(axis="x", labelbottom=False)
     ax_top.set_ylabel("Detector pixel (x,y), ordered by nominal path visit", fontsize=axis_label_fontsize)
     ax_top.grid(axis="x", color=(0, 0, 0, 0.08), linewidth=0.6)
+    if detrend_degree <= 0:
+        subtitle = f"Each trace is median-subtracted; orange markers show cadences where {target} is centered in that pixel"
+    elif detrend_degree == 1:
+        subtitle = f"Each trace has its best-fit linear trend removed; orange markers show cadences where {target} is centered in that pixel"
+    elif detrend_degree == 2:
+        subtitle = f"Each trace has its best-fit quadratic trend removed; orange markers show cadences where {target} is centered in that pixel"
+    else:
+        subtitle = (
+            f"Each trace has its best-fit polynomial trend (degree {detrend_degree}) removed; "
+            f"orange markers show cadences where {target} is centered in that pixel"
+        )
+    extra_text = ""
+    if extra_mask_times:
+        extra_text += "\nManual extra cadence cut(s): " + ", ".join(f"{value:.6f}" for value in extra_mask_times)
+    if extra_mask_ranges:
+        extra_text += "\nManual extra time cut range(s): " + ", ".join(
+            f"[{start:.6f}, {stop:.6f}]" for start, stop in extra_mask_ranges
+        )
     ax_top.set_title(
         f"{target} Sector {sector} local windows around the nominal pixel crossings\n"
-        f"Each trace has its best-fit linear trend removed; orange markers show cadences where {target} is centered in that pixel\n"
-        f"Window width = {window_multiplier:.1f} x average pixel residence time = {window_width_hours:.2f} h; total masked cadences = {total_removed} of {n_total}",
+        f"{subtitle}\n"
+        f"Window width = {window_multiplier:.1f} x average pixel residence time = {window_width_hours:.2f} h; total masked cadences = {total_removed} of {n_total}{extra_text}",
         fontsize=title_fontsize,
     )
 
     valid = np.isfinite(sum_flux)
     ax_bottom.axvline(0.0, color="tab:blue", alpha=0.25, linewidth=1.0)
     ax_bottom.axhline(0.0, color="0.35", alpha=0.65, linewidth=1.0)
+    if bootstrap_draws > 0 and boot_low.size == sum_flux.size:
+        ax_bottom.fill_between(
+            x_grid[valid],
+            boot_low[valid],
+            boot_high[valid],
+            color="#74a9cf",
+            alpha=0.20,
+            linewidth=0.0,
+            zorder=1,
+        )
+        err_idx = np.flatnonzero(valid)[:: max(1, int(bootstrap_errorbar_stride))]
+        lower_err = np.maximum(0.0, sum_flux[err_idx] - boot_low[err_idx])
+        upper_err = np.maximum(0.0, boot_high[err_idx] - sum_flux[err_idx])
+        ax_bottom.errorbar(
+            x_grid[err_idx],
+            sum_flux[err_idx],
+            yerr=np.vstack([lower_err, upper_err]),
+            fmt="none",
+            ecolor="#3182bd",
+            elinewidth=0.8,
+            alpha=0.45,
+            capsize=0,
+            zorder=2,
+        )
     ax_bottom.plot(x_grid[valid], sum_flux[valid], color="black", linewidth=1.5)
     ax_bottom.set_xlabel(f"Time relative to {target} crossing [hours]", fontsize=axis_label_fontsize)
     ax_bottom.set_ylabel("Sum", fontsize=axis_label_fontsize)
@@ -272,7 +395,9 @@ def main() -> int:
 
     keep, med, _running, mad, threshold = compute_ramp_mask(raw_matched, args.mask_window, args.mask_sigma)
     extra_mask_times = tuple(float(value) for value in args.extra_mask_times)
-    keep = apply_extra_mask(bundle_time, keep, extra_mask_times)
+    extra_mask_ranges = tuple((float(start), float(stop)) for start, stop in args.extra_mask_ranges)
+    keep = apply_extra_mask(bundle_time, keep, extra_mask_times, extra_mask_ranges)
+    detrend_degree = int(args.detrend_degree) if args.detrend_degree is not None else (1 if bool(args.detrend_linear) else 0)
 
     rows = build_series_rows(
         bundle_time,
@@ -283,7 +408,7 @@ def main() -> int:
         raw_matched,
         keep,
         path_pixels,
-        detrend_linear=bool(args.detrend_linear),
+        detrend_degree=detrend_degree,
     )
 
     residence_counts = [int(np.count_nonzero(row["centered"])) for row in rows if np.count_nonzero(row["centered"])]  # type: ignore[arg-type]
@@ -313,6 +438,12 @@ def main() -> int:
         marker_size=float(args.marker_size),
         offset_step=offset_step,
         sum_bin_hours=float(args.sum_bin_hours),
+        detrend_degree=detrend_degree,
+        extra_mask_times=extra_mask_times,
+        extra_mask_ranges=extra_mask_ranges,
+        bootstrap_draws=int(args.bootstrap_draws),
+        bootstrap_seed=int(args.bootstrap_seed),
+        bootstrap_errorbar_stride=int(args.bootstrap_errorbar_stride),
     )
 
     summary_lines = [
@@ -320,6 +451,8 @@ def main() -> int:
         f"cadences_total={len(keep)}",
         f"cadences_removed={int(np.count_nonzero(~keep))}",
         "extra_mask_times=" + ",".join(f"{value:.12f}" for value in extra_mask_times),
+        "extra_mask_ranges="
+        + ",".join(f"[{start:.12f},{stop:.12f}]" for start, stop in extra_mask_ranges),
         f"average_residence_count={avg_residence_count}",
         f"median_cadence_hours={median_cadence_hours}",
         f"window_multiplier={float(args.window_multiplier)}",
@@ -327,6 +460,10 @@ def main() -> int:
         f"half_window_hours={half_window_hours}",
         f"sum_bin_hours={float(args.sum_bin_hours)}",
         f"offset_step={offset_step}",
+        f"detrend_degree={detrend_degree}",
+        f"bootstrap_draws={int(args.bootstrap_draws)}",
+        f"bootstrap_seed={int(args.bootstrap_seed)}",
+        f"bootstrap_errorbar_stride={int(args.bootstrap_errorbar_stride)}",
     ]
     args.out_summary.parent.mkdir(parents=True, exist_ok=True)
     args.out_summary.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -74,18 +75,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=(),
         help="Additional exact BTJD cadences to exclude after the automatic ramp mask.",
     )
+    parser.add_argument(
+        "--extra-mask-ranges",
+        type=float,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("START", "STOP"),
+        help="Additional inclusive BTJD time ranges to exclude after the automatic ramp mask.",
+    )
     parser.add_argument("--label-every", type=int, default=3)
     parser.add_argument("--ytick-fontsize", type=int, default=14)
     parser.add_argument("--xtick-fontsize", type=int, default=14)
     parser.add_argument("--axis-label-fontsize", type=int, default=15)
     parser.add_argument("--title-fontsize", type=int, default=15)
     parser.add_argument("--line-alpha", type=float, default=0.78)
+    parser.add_argument("--line-width", type=float, default=0.8)
     parser.add_argument("--marker-alpha", type=float, default=0.32)
     parser.add_argument("--marker-size", type=float, default=12.0)
     parser.add_argument(
         "--detrend-linear",
         action="store_true",
         help="Subtract a best-fit linear trend from each detector-pixel time series before plotting.",
+    )
+    parser.add_argument(
+        "--detrend-degree",
+        type=int,
+        default=None,
+        help="Polynomial degree to remove from each detector-pixel time series. Overrides --detrend-linear.",
     )
     parser.add_argument(
         "--offset-scale",
@@ -128,8 +145,11 @@ def build_series_rows(
     raw_matched: np.ndarray,
     keep: np.ndarray,
     path_pixels: list[tuple[int, int]],
-    detrend_linear: bool,
+    detrend_degree: int | bool,
 ) -> list[dict[str, object]]:
+    degree = int(detrend_degree) if not isinstance(detrend_degree, bool) else (1 if detrend_degree else 0)
+    if degree < 0:
+        raise ValueError(f"`detrend_degree` must be non-negative; got {degree}.")
     rows: list[dict[str, object]] = []
     for order_index, (px, py) in enumerate(path_pixels):
         vals = np.full(len(bundle_time), np.nan, dtype=float)
@@ -141,11 +161,17 @@ def build_series_rows(
                 vals[frame_index] = float(raw_matched[frame_index, ly, lx])
         finite = np.isfinite(vals)
         plotted = np.full(len(bundle_time), np.nan, dtype=float)
-        trend_slope = 0.0
-        trend_intercept = 0.0
-        if np.count_nonzero(finite) >= 2 and detrend_linear:
-            trend_slope, trend_intercept = np.polyfit(bundle_time[finite], vals[finite], 1)
-            plotted[finite] = vals[finite] - (trend_slope * bundle_time[finite] + trend_intercept)
+        trend_degree = 0
+        trend_coefficients = np.array([], dtype=float)
+        trend_slope = np.nan
+        trend_intercept = np.nan
+        if degree >= 1 and np.count_nonzero(finite) >= degree + 1:
+            trend_coefficients = np.polyfit(bundle_time[finite], vals[finite], degree)
+            plotted[finite] = vals[finite] - np.polyval(trend_coefficients, bundle_time[finite])
+            trend_degree = degree
+            if degree == 1:
+                trend_slope = float(trend_coefficients[0])
+                trend_intercept = float(trend_coefficients[1])
         else:
             baseline = float(np.nanmedian(vals[finite])) if np.any(finite) else 0.0
             plotted[finite] = vals[finite] - baseline
@@ -156,6 +182,8 @@ def build_series_rows(
                 "raw_flux": vals,
                 "plot_flux": plotted,
                 "centered": centered,
+                "trend_degree": int(trend_degree),
+                "trend_coefficients": trend_coefficients.tolist(),
                 "trend_slope_per_day": float(trend_slope),
                 "trend_intercept": float(trend_intercept),
             }
@@ -184,6 +212,8 @@ def write_csv(rows: list[dict[str, object]], bundle_time: np.ndarray, keep: np.n
                     "plot_flux": float(plot_flux[frame_index]),
                     "is_centered_pixel": bool(centered[frame_index]),
                     "cadence_kept": bool(keep[frame_index]),
+                    "trend_degree": int(row["trend_degree"]),
+                    "trend_coefficients_json": json.dumps(row["trend_coefficients"]),  # type: ignore[arg-type]
                     "trend_slope_per_day": float(row["trend_slope_per_day"]),
                     "trend_intercept": float(row["trend_intercept"]),
                 }
@@ -205,11 +235,13 @@ def plot_rows(
     axis_label_fontsize: int,
     title_fontsize: int,
     line_alpha: float,
+    line_width: float,
     marker_alpha: float,
     marker_size: float,
     offset_scale: float,
-    detrend_linear: bool,
+    detrend_degree: int,
     extra_mask_times: tuple[float, ...],
+    extra_mask_ranges: tuple[tuple[float, float], ...],
 ) -> float:
     all_resid = np.concatenate(
         [row["plot_flux"][np.isfinite(row["plot_flux"])] for row in rows if np.any(np.isfinite(row["plot_flux"]))]  # type: ignore[index]
@@ -228,7 +260,7 @@ def plot_rows(
         plot_flux = row["plot_flux"]  # type: ignore[assignment]
         centered = row["centered"]  # type: ignore[assignment]
         plot_y = plot_flux + offset
-        ax.plot(bundle_time, plot_y, color=(0.1, 0.1, 0.1, line_alpha), linewidth=0.8)
+        ax.plot(bundle_time, plot_y, color=(0.1, 0.1, 0.1, line_alpha), linewidth=line_width)
         marker_times = bundle_time[centered]
         marker_vals = plot_y[centered]
         if marker_times.size:
@@ -257,16 +289,32 @@ def plot_rows(
     ax.tick_params(axis="x", labelsize=xtick_fontsize)
     ax.set_xlabel("Time [BTJD]", fontsize=axis_label_fontsize)
     ax.set_ylabel("Detector pixel (x,y), ordered by nominal path visit", fontsize=axis_label_fontsize)
-    subtitle = (
-        "Each trace has its best-fit linear trend removed; orange markers show cadences where "
-        f"{target} is centered in that pixel"
-        if detrend_linear
-        else f"Each trace is median-subtracted and vertically offset; orange markers show cadences where {target} is centered in that pixel"
-    )
+    if detrend_degree <= 0:
+        subtitle = (
+            f"Each trace is median-subtracted and vertically offset; orange markers show cadences where {target} is centered in that pixel"
+        )
+    elif detrend_degree == 1:
+        subtitle = (
+            "Each trace has its best-fit linear trend removed; orange markers show cadences where "
+            f"{target} is centered in that pixel"
+        )
+    elif detrend_degree == 2:
+        subtitle = (
+            "Each trace has its best-fit quadratic trend removed; orange markers show cadences where "
+            f"{target} is centered in that pixel"
+        )
+    else:
+        subtitle = (
+            f"Each trace has its best-fit polynomial trend (degree {detrend_degree}) removed; orange markers show cadences where "
+            f"{target} is centered in that pixel"
+        )
     extra_text = ""
     if extra_mask_times:
         formatted = ", ".join(f"{value:.6f}" for value in extra_mask_times)
         extra_text = f"\nManual extra cadence cut(s): {formatted} BTJD"
+    if extra_mask_ranges:
+        formatted_ranges = ", ".join(f"[{start:.6f}, {stop:.6f}]" for start, stop in extra_mask_ranges)
+        extra_text += f"\nManual extra time cut range(s): {formatted_ranges} BTJD"
     ax.set_title(
         f"{target} Sector {sector} raw detector-pixel time series along the nominal path\n"
         f"{subtitle}\n"
@@ -290,7 +338,8 @@ def write_summary(
     rows: list[dict[str, object]],
     offset_step: float,
     extra_mask_times: tuple[float, ...],
-    detrend_linear: bool,
+    extra_mask_ranges: tuple[tuple[float, float], ...],
+    detrend_degree: int,
 ) -> None:
     no_centered = [row["pixel"] for row in rows if not np.any(row["centered"])]  # type: ignore[index]
     lines = [
@@ -301,11 +350,16 @@ def write_summary(
         f"ramp_mask_mad={mad}",
         f"ramp_mask_threshold={threshold}",
         f"offset_step={offset_step}",
-        f"detrend_linear={detrend_linear}",
+        f"detrend_degree={detrend_degree}",
         f"pixels_with_no_centered_kept_cadences={len(no_centered)}",
     ]
     if extra_mask_times:
         lines.append("extra_mask_times=" + ",".join(f"{value:.12f}" for value in extra_mask_times))
+    if extra_mask_ranges:
+        lines.append(
+            "extra_mask_ranges="
+            + ",".join(f"[{start:.12f},{stop:.12f}]" for start, stop in extra_mask_ranges)
+        )
     if no_centered:
         lines.append("no_centered_pixels=" + ",".join(f"{px}:{py}" for px, py in no_centered))
     out_summary.parent.mkdir(parents=True, exist_ok=True)
@@ -329,6 +383,7 @@ def main() -> int:
     raw_matched = raw_cube[match_idx]
 
     keep, med, _running, mad, threshold = compute_ramp_mask(raw_matched, args.mask_window, args.mask_sigma)
+    detrend_degree = int(args.detrend_degree) if args.detrend_degree is not None else (1 if bool(args.detrend_linear) else 0)
     extra_mask_times = tuple(float(value) for value in args.extra_mask_times)
     if extra_mask_times:
         extra_mask = np.zeros(len(bundle_time), dtype=bool)
@@ -338,6 +393,11 @@ def main() -> int:
                 raise ValueError(f"No cadence matched requested extra mask time {value:.12f} within 1 second.")
             extra_mask[nearest] = True
         keep = keep & (~extra_mask)
+    extra_mask_ranges = tuple((float(start), float(stop)) for start, stop in args.extra_mask_ranges)
+    for start, stop in extra_mask_ranges:
+        lo = min(start, stop)
+        hi = max(start, stop)
+        keep = keep & ~((bundle_time >= lo) & (bundle_time <= hi))
     rows = build_series_rows(
         bundle_time,
         det_x,
@@ -347,7 +407,7 @@ def main() -> int:
         raw_matched,
         keep,
         path_pixels,
-        detrend_linear=bool(args.detrend_linear),
+        detrend_degree=detrend_degree,
     )
     write_csv(rows, bundle_time, keep, args.out_csv)
     offset_step = plot_rows(
@@ -363,11 +423,13 @@ def main() -> int:
         axis_label_fontsize=args.axis_label_fontsize,
         title_fontsize=args.title_fontsize,
         line_alpha=args.line_alpha,
+        line_width=args.line_width,
         marker_alpha=args.marker_alpha,
         marker_size=args.marker_size,
         offset_scale=args.offset_scale,
-        detrend_linear=bool(args.detrend_linear),
+        detrend_degree=detrend_degree,
         extra_mask_times=extra_mask_times,
+        extra_mask_ranges=extra_mask_ranges,
     )
     write_summary(
         args.out_summary,
@@ -379,7 +441,8 @@ def main() -> int:
         rows,
         offset_step,
         extra_mask_times=extra_mask_times,
-        detrend_linear=bool(args.detrend_linear),
+        extra_mask_ranges=extra_mask_ranges,
+        detrend_degree=detrend_degree,
     )
 
     no_centered = [row["pixel"] for row in rows if not np.any(row["centered"])]  # type: ignore[index]
@@ -389,7 +452,8 @@ def main() -> int:
             "distinct_path_pixels": len(path_pixels),
             "cadences_removed": int(np.count_nonzero(~keep)),
             "extra_mask_times": extra_mask_times,
-            "detrend_linear": bool(args.detrend_linear),
+            "extra_mask_ranges": extra_mask_ranges,
+            "detrend_degree": detrend_degree,
             "pixels_with_no_centered_kept_cadences": len(no_centered),
             "no_centered_pixels": no_centered,
             "offset_step": offset_step,
