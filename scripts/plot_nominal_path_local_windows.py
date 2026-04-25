@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import argparse
 import sys
 from pathlib import Path
@@ -93,6 +95,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--marker-alpha", type=float, default=0.40)
     parser.add_argument("--marker-size", type=float, default=24.0)
     parser.add_argument("--offset-scale", type=float, default=(1.0 / 3.0) * 0.5)
+    parser.add_argument(
+        "--aperture-neighbor-count",
+        type=int,
+        default=0,
+        help="If > 0, combine the centered path pixel with this many nearest neighbors from the surrounding 3x3 footprint.",
+    )
+    parser.add_argument(
+        "--aperture-gaussian-sigma",
+        type=float,
+        default=0.9,
+        help="Gaussian weighting sigma, in detector pixels, used when combining aperture footprints.",
+    )
+    parser.add_argument(
+        "--aperture-fixed-offsets",
+        type=int,
+        nargs="*",
+        default=(),
+        help="Optional fixed neighbor offsets as dx dy pairs. Example: --aperture-fixed-offsets 1 0 0 -1",
+    )
     parser.add_argument("--bootstrap-draws", type=int, default=0)
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--bootstrap-errorbar-stride", type=int, default=4)
@@ -184,6 +205,140 @@ def offset_step_from_rows(rows: list[dict[str, object]], offset_scale: float) ->
     return float(max(8.0, 2.4 * amp) * offset_scale)
 
 
+def extract_detector_pixel_series(
+    bundle_time: np.ndarray,
+    corner1: np.ndarray,
+    corner2: np.ndarray,
+    raw_matched: np.ndarray,
+    keep: np.ndarray,
+    px: int,
+    py: int,
+) -> np.ndarray:
+    vals = np.full(len(bundle_time), np.nan, dtype=float)
+    for frame_index in range(len(bundle_time)):
+        lx = px - int(corner1[frame_index])
+        ly = py - int(corner2[frame_index])
+        if 0 <= lx < raw_matched.shape[2] and 0 <= ly < raw_matched.shape[1] and keep[frame_index]:
+            vals[frame_index] = float(raw_matched[frame_index, ly, lx])
+    return vals
+
+
+def detrend_series(bundle_time: np.ndarray, vals: np.ndarray, degree: int) -> tuple[np.ndarray, int, np.ndarray, float, float]:
+    finite = np.isfinite(vals)
+    plotted = np.full(len(bundle_time), np.nan, dtype=float)
+    trend_degree = 0
+    trend_coefficients = np.array([], dtype=float)
+    trend_slope = np.nan
+    trend_intercept = np.nan
+    if degree >= 1 and np.count_nonzero(finite) >= degree + 1:
+        trend_coefficients = np.polyfit(bundle_time[finite], vals[finite], degree)
+        plotted[finite] = vals[finite] - np.polyval(trend_coefficients, bundle_time[finite])
+        trend_degree = degree
+        if degree == 1:
+            trend_slope = float(trend_coefficients[0])
+            trend_intercept = float(trend_coefficients[1])
+    else:
+        baseline = float(np.nanmedian(vals[finite])) if np.any(finite) else 0.0
+        plotted[finite] = vals[finite] - baseline
+    return plotted, trend_degree, trend_coefficients, trend_slope, trend_intercept
+
+
+def build_aperture_series_rows(
+    bundle_time: np.ndarray,
+    det_x: np.ndarray,
+    det_y: np.ndarray,
+    corner1: np.ndarray,
+    corner2: np.ndarray,
+    raw_matched: np.ndarray,
+    keep: np.ndarray,
+    path_pixels: list[tuple[int, int]],
+    detrend_degree: int | bool,
+    aperture_neighbor_count: int,
+    aperture_gaussian_sigma: float,
+    aperture_fixed_offsets: tuple[tuple[int, int], ...] | None = None,
+) -> list[dict[str, object]]:
+    degree = int(detrend_degree) if not isinstance(detrend_degree, bool) else (1 if detrend_degree else 0)
+    if degree < 0:
+        raise ValueError(f"`detrend_degree` must be non-negative; got {degree}.")
+    if aperture_neighbor_count < 0 or aperture_neighbor_count > 8:
+        raise ValueError(f"`aperture_neighbor_count` must be in [0, 8]; got {aperture_neighbor_count}.")
+    sigma = max(float(aperture_gaussian_sigma), 1e-6)
+    fixed_offsets = tuple(aperture_fixed_offsets or ())
+
+    rows: list[dict[str, object]] = []
+    rounded_x = np.rint(det_x).astype(int)
+    rounded_y = np.rint(det_y).astype(int)
+    for order_index, (px, py) in enumerate(path_pixels):
+        candidate_pixels = [(int(px + dx), int(py + dy)) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
+        central_idx = candidate_pixels.index((int(px), int(py)))
+        candidate_x = np.asarray([cx for cx, _ in candidate_pixels], dtype=float)
+        candidate_y = np.asarray([cy for _, cy in candidate_pixels], dtype=float)
+
+        raw_components = []
+        plot_components = []
+        for cx, cy in candidate_pixels:
+            raw_vals = extract_detector_pixel_series(bundle_time, corner1, corner2, raw_matched, keep, cx, cy)
+            plot_vals, _trend_degree, _coeffs, _slope, _intercept = detrend_series(bundle_time, raw_vals, degree)
+            raw_components.append(raw_vals)
+            plot_components.append(plot_vals)
+        raw_components_arr = np.asarray(raw_components, dtype=float)
+        plot_components_arr = np.asarray(plot_components, dtype=float)
+
+        raw_aperture = np.full(len(bundle_time), np.nan, dtype=float)
+        plot_aperture = np.full(len(bundle_time), np.nan, dtype=float)
+        if fixed_offsets:
+            fixed_selected = [central_idx]
+            for off in fixed_offsets:
+                try:
+                    idx = candidate_pixels.index((int(px + off[0]), int(py + off[1])))
+                except ValueError:
+                    continue
+                if idx not in fixed_selected:
+                    fixed_selected.append(idx)
+        else:
+            fixed_selected = []
+        for frame_index in range(len(bundle_time)):
+            if not keep[frame_index]:
+                continue
+            d2 = np.square(candidate_x - float(det_x[frame_index])) + np.square(candidate_y - float(det_y[frame_index]))
+            if fixed_selected:
+                selected = fixed_selected
+            else:
+                others = [idx for idx in np.argsort(d2) if idx != central_idx]
+                selected = [central_idx] + others[: int(aperture_neighbor_count)]
+            weights = np.exp(-0.5 * d2[selected] / (sigma * sigma))
+            if not np.any(np.isfinite(weights)):
+                continue
+
+            raw_vals = raw_components_arr[selected, frame_index]
+            plot_vals = plot_components_arr[selected, frame_index]
+            raw_finite = np.isfinite(raw_vals)
+            plot_finite = np.isfinite(plot_vals)
+            if np.any(raw_finite):
+                raw_aperture[frame_index] = float(np.sum(weights[raw_finite] * raw_vals[raw_finite]) / np.sum(weights[raw_finite]))
+            if np.any(plot_finite):
+                plot_aperture[frame_index] = float(np.sum(weights[plot_finite] * plot_vals[plot_finite]) / np.sum(weights[plot_finite]))
+
+        centered = (rounded_x == int(px)) & (rounded_y == int(py)) & keep
+        rows.append(
+            {
+                "order_index": int(order_index),
+                "pixel": (int(px), int(py)),
+                "raw_flux": raw_aperture,
+                "plot_flux": plot_aperture,
+                "centered": centered,
+                "trend_degree": int(degree),
+                "trend_coefficients": [],
+                "trend_slope_per_day": float("nan"),
+                "trend_intercept": float("nan"),
+                "aperture_neighbor_count": int(aperture_neighbor_count),
+                "aperture_gaussian_sigma": float(sigma),
+                "aperture_fixed_offsets": fixed_offsets,
+            }
+        )
+    return rows
+
+
 def summed_curve(df: pd.DataFrame, half_window_hours: float, bin_width_hours: float) -> tuple[np.ndarray, np.ndarray]:
     x_grid = np.arange(-half_window_hours, half_window_hours + 0.5 * bin_width_hours, bin_width_hours)
     sum_flux = np.full_like(x_grid, np.nan, dtype=float)
@@ -267,6 +422,9 @@ def plot_local_windows(
     bootstrap_draws: int,
     bootstrap_seed: int,
     bootstrap_errorbar_stride: int,
+    aperture_neighbor_count: int,
+    aperture_gaussian_sigma: float,
+    aperture_fixed_offsets: tuple[tuple[int, int], ...],
 ) -> None:
     rows = []
     for order_index, group in df.groupby("order_index", sort=True):
@@ -319,15 +477,29 @@ def plot_local_windows(
     ax_top.tick_params(axis="x", labelbottom=False)
     ax_top.set_ylabel("Detector pixel (x,y), ordered by nominal path visit", fontsize=axis_label_fontsize)
     ax_top.grid(axis="x", color=(0, 0, 0, 0.08), linewidth=0.6)
+    if aperture_fixed_offsets:
+        fixed_offsets_text = ", ".join(f"({dx:+d},{dy:+d})" for dx, dy in aperture_fixed_offsets)
+        aperture_prefix = (
+            "Each trace combines the centered pixel plus fixed neighbors "
+            f"{fixed_offsets_text} with Gaussian weights (sigma={aperture_gaussian_sigma:.2f} px); "
+        )
+    elif aperture_neighbor_count > 0:
+        aperture_prefix = (
+            f"Each trace combines the centered pixel plus {aperture_neighbor_count} nearest neighbors "
+            f"with Gaussian weights (sigma={aperture_gaussian_sigma:.2f} px); "
+        )
+    else:
+        aperture_prefix = "Each trace "
     if detrend_degree <= 0:
-        subtitle = f"Each trace is median-subtracted; orange markers show cadences where {target} is centered in that pixel"
+        subtitle = aperture_prefix + f"is median-subtracted; orange markers show cadences where {target} is centered in that pixel"
     elif detrend_degree == 1:
-        subtitle = f"Each trace has its best-fit linear trend removed; orange markers show cadences where {target} is centered in that pixel"
+        subtitle = aperture_prefix + f"has its best-fit linear trend removed; orange markers show cadences where {target} is centered in that pixel"
     elif detrend_degree == 2:
-        subtitle = f"Each trace has its best-fit quadratic trend removed; orange markers show cadences where {target} is centered in that pixel"
+        subtitle = aperture_prefix + f"has its best-fit quadratic trend removed; orange markers show cadences where {target} is centered in that pixel"
     else:
         subtitle = (
-            f"Each trace has its best-fit polynomial trend (degree {detrend_degree}) removed; "
+            aperture_prefix
+            + f"has its best-fit polynomial trend (degree {detrend_degree}) removed; "
             f"orange markers show cadences where {target} is centered in that pixel"
         )
     extra_text = ""
@@ -418,18 +590,40 @@ def main() -> int:
     else:
         keep = apply_extra_mask(bundle_time, keep, extra_mask_times, extra_mask_ranges)
     detrend_degree = int(args.detrend_degree) if args.detrend_degree is not None else (1 if bool(args.detrend_linear) else 0)
-
-    rows = build_series_rows(
-        bundle_time,
-        det_x,
-        det_y,
-        corner1,
-        corner2,
-        raw_matched,
-        keep,
-        path_pixels,
-        detrend_degree=detrend_degree,
+    fixed_offsets_raw = tuple(int(value) for value in args.aperture_fixed_offsets)
+    if len(fixed_offsets_raw) % 2 != 0:
+        raise ValueError("--aperture-fixed-offsets must contain an even number of integers (dx dy pairs).")
+    aperture_fixed_offsets = tuple(
+        (fixed_offsets_raw[i], fixed_offsets_raw[i + 1]) for i in range(0, len(fixed_offsets_raw), 2)
     )
+
+    if int(args.aperture_neighbor_count) > 0 or aperture_fixed_offsets:
+        rows = build_aperture_series_rows(
+            bundle_time,
+            det_x,
+            det_y,
+            corner1,
+            corner2,
+            raw_matched,
+            keep,
+            path_pixels,
+            detrend_degree=detrend_degree,
+            aperture_neighbor_count=int(args.aperture_neighbor_count),
+            aperture_gaussian_sigma=float(args.aperture_gaussian_sigma),
+            aperture_fixed_offsets=aperture_fixed_offsets,
+        )
+    else:
+        rows = build_series_rows(
+            bundle_time,
+            det_x,
+            det_y,
+            corner1,
+            corner2,
+            raw_matched,
+            keep,
+            path_pixels,
+            detrend_degree=detrend_degree,
+        )
 
     residence_counts = [int(np.count_nonzero(row["centered"])) for row in rows if np.count_nonzero(row["centered"])]  # type: ignore[arg-type]
     avg_residence_count = float(np.mean(residence_counts)) if residence_counts else 1.0
@@ -464,6 +658,9 @@ def main() -> int:
         bootstrap_draws=int(args.bootstrap_draws),
         bootstrap_seed=int(args.bootstrap_seed),
         bootstrap_errorbar_stride=int(args.bootstrap_errorbar_stride),
+        aperture_neighbor_count=int(args.aperture_neighbor_count),
+        aperture_gaussian_sigma=float(args.aperture_gaussian_sigma),
+        aperture_fixed_offsets=aperture_fixed_offsets,
     )
 
     summary_lines = [
@@ -485,6 +682,9 @@ def main() -> int:
         f"bootstrap_draws={int(args.bootstrap_draws)}",
         f"bootstrap_seed={int(args.bootstrap_seed)}",
         f"bootstrap_errorbar_stride={int(args.bootstrap_errorbar_stride)}",
+        f"aperture_neighbor_count={int(args.aperture_neighbor_count)}",
+        f"aperture_gaussian_sigma={float(args.aperture_gaussian_sigma)}",
+        "aperture_fixed_offsets=" + ",".join(f"({dx},{dy})" for dx, dy in aperture_fixed_offsets),
     ]
     args.out_summary.parent.mkdir(parents=True, exist_ok=True)
     args.out_summary.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
