@@ -1,37 +1,90 @@
 # kbo-tess
 
-Minimal Python tools for detector-local shift-stack recoveries of faint moving
-objects in TESS data.
+Detector-local search tools for faint moving-object recoveries in TESS data.
+The project started as a bounded known-path Sedna experiment, then grew into a
+small real-data pipeline: ephemeris normalization, moving cutout construction,
+geometry checks, known-track stacking, cadence masking, injection calibration,
+nearby null controls, and a bright-KBO survey.
 
-The current milestone is a bounded, known-path Sedna study for TESS Sector 5,
-camera 1, CCD 4. The project has moved beyond synthetic scaffolding into a
-real-data rehearsal and control-study phase, but it does not make a Sedna
-recovery claim.
+The current state is deliberately evidence-first. Sedna has encouraging
+path-aligned diagnostics in Sector 5, camera 1, CCD 4, and injected sources are
+recovered strongly, but the original bounded 96-cadence shift-stack does not by
+itself establish a definitive Sedna detection. The broader survey products show
+that the same machinery recovers stronger nominal-path signals for several
+other bright KBO opportunities.
 
-Current status:
-- The canonical seam is a normalized ephemeris CSV plus a local NPZ cube bundle.
-- The real-data moving-cutout path works through `tess_ephem` and `tess_asteroids`.
-- The CLIs are target-aware enough to run the same bounded workflow on Sedna and Pluto via `--target`.
-- A lightweight summary of the bright-KBO nominal-path survey is tracked in
-  [docs/kbo_recoveries.md](docs/kbo_recoveries.md), including the overview plot
-  and sanitized CSV tables.
-- Geometry passes on the bounded real Sedna subset tested so far.
-- On that subset, `barycentric=true` is slightly better geometrically than `false`.
-- The most self-consistent bounded configuration so far is:
+## What is here
+
+- A normalized ephemeris CSV interface with explicit TDB timing, target,
+  sector, camera, CCD, detector coordinates, and sky-plane metadata.
+- Moving TESS cutout bundles stored as local NPZ files with detector-local
+  tracks, corners, timing, and metadata.
+- Geometry residual checks for barycentric and spacecraft timing conventions.
+- Known-path recovery, offset searches, growth curves, injection tests, and
+  null-track controls.
+- Common-mode/automask diagnostics for full-sector local-window analyses.
+- Holman-style image-domain stacking helpers and target-level wrappers.
+- A lightweight bright-KBO recovery survey summary in
+  [docs/kbo_recoveries.md](docs/kbo_recoveries.md).
+
+## Sedna Arc
+
+The main Sedna real-data thread is Sector 5 / camera 1 / CCD 4. The full-sector
+nominal-path diagnostic follows 44 detector pixels over 1086 cadences, masks 95
+cadences, detrends each local pixel window, and sums the flux around the known
+crossing times. In the compact survey table this produces a Sedna contrast S/N
+of 10.14 with an estimated `Tmag ~= 20.53`.
+
+![Sedna Sector 5 detector path and nearby catalog sources](docs/assets/sedna_sector5_cutout_grid_overlay.png)
+
+![Sedna local windows around nominal pixel crossings](docs/assets/sedna_sector5_nominal_path_local_windows.png)
+
+The earlier bounded 96-cadence control study remains useful as a stress test.
+It has excellent geometry (`median_detector_residual_px = 0.0027` in the
+barycentric bundle), and the best local offset reaches aperture S/N 2.31, but
+the exact nominal stack score is near zero. Nearby null controls reach S/N 1.91,
+so the bounded stack is suggestive only at the offset-search level.
+
+![Sedna bounded barycentric recovery diagnostic](docs/assets/sedna_sector5_barycentric_recovery_diagnostic.png)
+
+![Sedna nearby null-track controls](docs/assets/sedna_sector5_null_track_controls.png)
+
+The same bounded machinery does recover synthetic sources injected along the
+known path, which is an important sanity check on the geometry, interpolation,
+and score bookkeeping.
+
+![Sedna injection calibration](docs/assets/sedna_sector5_injection_calibration.png)
+
+## Broader Results
+
+The bright-KBO nominal-path survey ran the same style of detector-local
+workflow across multiple outer Solar System bodies. The lightweight tracked
+summary includes 17 successful target runs and two failed wrapper runs
+(`G!kun||'homdima` and `Máni`). The strongest contrast S/N entries in that
+survey are Orcus, Haumea, Sedna, Achlys, Quaoar, Varuna, Aya, and Ixion.
+
+![Bright KBO survey overview](docs/assets/bright_kbo_survey_overview.png)
+
+See [docs/kbo_recoveries.md](docs/kbo_recoveries.md) and the CSV files under
+[docs/data](docs/data) for the tracked survey table. Full working products
+remain under ignored local `outputs/` directories because the cube bundles and
+intermediate diagnostics are large.
+
+## Current Interpretation
+
+- The real-data pipeline is now substantially broader than the original Sedna
+  rehearsal: it includes target-aware CLIs, automasking, null controls,
+  injections, survey summaries, and image-domain stacking experiments.
+- Sedna Sector 5 has a coherent full-sector nominal-path local-window feature,
+  but the bounded 96-cadence shift-stack is not a standalone detection claim.
+- Pluto calibration exposed late-time systematic ramps in the official/simple
+  light curves; clipping contaminated cadences made the bounded Pluto known-path
+  recovery beat nearby controls more cleanly.
+- The most self-consistent bounded Sedna configuration remains
   `barycentric=true` + loader background `rolling` + recovery background `none`.
-- Injection tests recover coherent track-aligned sources strongly.
-- The nominal Sedna track does not yet beat nearby null controls cleanly.
-- The first bounded Pluto calibration run now exists on Sector 92 / camera 2 / CCD 1:
-  geometry passes and direct moving-aperture photometry is sensible, but the exact
-  nominal shift-stack track still does not beat null controls cleanly.
-- The official high-level `tess_asteroids` workflow now duplicates in this repo on
+- The official high-level `tess_asteroids` workflow duplicates in this repo on
   Python 3.12 when run with `KBO_TESS_USE_SYSTEM_HOME=1` and
   `MPLCONFIGDIR=$PWD/.mplconfig`.
-- On the frozen two-day Pluto debug window, the official/simple light curve shows
-  a late-time systematics ramp. Clipping cadences later than
-  `time_tdb_jd_minus_2457000 = 3828.30` makes the bounded `background=none`
-  nominal shift-stack recovery become the best local solution and beat nearby
-  controls more cleanly.
 
 Install the baseline dependencies with:
 
