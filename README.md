@@ -12,6 +12,9 @@ Current status:
 - The canonical seam is a normalized ephemeris CSV plus a local NPZ cube bundle.
 - The real-data moving-cutout path works through `tess_ephem` and `tess_asteroids`.
 - The CLIs are target-aware enough to run the same bounded workflow on Sedna and Pluto via `--target`.
+- A lightweight summary of the bright-KBO nominal-path survey is tracked in
+  [docs/kbo_recoveries.md](docs/kbo_recoveries.md), including the overview plot
+  and sanitized CSV tables.
 - Geometry passes on the bounded real Sedna subset tested so far.
 - On that subset, `barycentric=true` is slightly better geometrically than `false`.
 - The most self-consistent bounded configuration so far is:

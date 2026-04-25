@@ -1,0 +1,20 @@
+target,status,source,reason
+Sedna,success,existing,
+Haumea,success,existing,
+Eris,success,new,
+Makemake,success,new,
+Gonggong,success,new,
+Orcus,success,new,
+Quaoar,success,new,
+Chiminigagua,success,new,
+Aya,success,new,
+G!kun||'homdima,failed,,wrapper exit code 1
+Varda,success,new,
+Ixion,success,new,
+Máni,failed,,wrapper exit code 1
+Ritona,success,new,
+Achlys,success,new,
+Varuna,success,new,
+Dziewanna,success,new,
+Salacia,success,new,
+Chaos,success,new,
