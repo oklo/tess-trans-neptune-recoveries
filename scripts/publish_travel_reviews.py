@@ -225,9 +225,20 @@ def reviewed_git_publication(checkout, expected, previous):
         command("gh", "pr", "create", "--base", "main", "--head", branch,
                 "--title", "Publish independently reviewed search results",
                 "--body", "Update the atlas from signed accepted results and frozen, disjoint-reference accounting. Candidate fields remain uncredited.")
+        # Snapshot-only pushes are excluded by the repository's workflow paths.
+        command("gh", "workflow", "run", "tests.yml", "--ref", branch)
         raise publication.PublicationRetry("Snapshot pull request is waiting for required checks")
     require(len(matches) == 1 and matches[0]["state"] == "OPEN", "Snapshot pull request needs reconciliation")
     number = str(matches[0]["number"])
+    head = git("rev-parse", "HEAD").decode().strip()
+    runs = json.loads(command("gh", "run", "list", "--workflow", "tests.yml", "--branch", branch,
+                             "--limit", "10", "--json", "headSha,status").decode())
+    relevant = [r for r in runs if r["headSha"] == head]
+    if not relevant:
+        command("gh", "workflow", "run", "tests.yml", "--ref", branch)
+        raise publication.PublicationRetry("Started required checks for snapshot pull request")
+    if relevant[0]["status"] != "completed":
+        raise publication.PublicationRetry("Snapshot pull request is waiting for required checks")
     check = subprocess.run(["gh", "pr", "checks", number, "--required", "--json", "name,state"],
                            cwd=checkout, text=True, capture_output=True, timeout=60)
     if check.returncode == 8:
