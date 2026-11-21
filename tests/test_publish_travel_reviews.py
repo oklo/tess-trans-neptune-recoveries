@@ -41,7 +41,7 @@ def test_publication_retry_does_not_repeat_accounting_or_export(tmp_path, monkey
     site.write_bytes(new)
     export = Mock(side_effect=AssertionError("Must not export twice"))
     monkeypatch.setattr(publisher.science, "export", export)
-    monkeypatch.setattr(publisher.publication, "confirm_git_publication", Mock(return_value="commit"))
+    monkeypatch.setattr(publisher, "reviewed_git_publication", Mock(return_value="commit"))
     publish = Mock(side_effect=[publisher.publication.PublicationRetry("lost acknowledgement"), None])
     monkeypatch.setattr(publisher.publication, "publish_site", publish)
     with pytest.raises(publisher.publication.PublicationRetry):
@@ -85,3 +85,29 @@ def test_checkpoint_retries_same_result_then_skips_completed(tmp_path, monkeypat
     publisher.run(batch)
     assert prepared == [299, 299]
     assert publish.call_count == 2
+
+
+def test_snapshot_publication_uses_pull_request_never_pushes_main(tmp_path, monkeypatch):
+    calls = []
+    old, new = b"old", b"new"
+
+    def command(args, **kwargs):
+        calls.append(args)
+        if args[:3] == ["git", "branch", "--show-current"]:
+            return b"main\n"
+        if args[:3] == ["git", "show", "HEAD:" + publisher.publication.SNAPSHOT]:
+            return new
+        if args[:3] == ["git", "show", "origin/main:" + publisher.publication.SNAPSHOT]:
+            return old
+        if args[:3] == ["git", "diff", "--name-only"]:
+            return (publisher.publication.SNAPSHOT + "\n").encode()
+        if args[:3] == ["gh", "pr", "list"]:
+            return b"[]"
+        return b""
+
+    monkeypatch.setattr(publisher.subprocess, "check_output", command)
+    with pytest.raises(publisher.publication.PublicationRetry, match="required checks"):
+        publisher.reviewed_git_publication(tmp_path, new, old)
+    pushes = [c for c in calls if c[:2] == ["git", "push"]]
+    assert len(pushes) == 1 and pushes[0][-1].startswith("HEAD:refs/heads/atlas-publication-")
+    assert any(c[:3] == ["gh", "pr", "create"] for c in calls)

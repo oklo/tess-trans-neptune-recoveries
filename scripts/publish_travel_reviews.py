@@ -180,10 +180,66 @@ def publish(cycle, checkout):
     require(site.read_bytes() in (previous, expected), "Publication checkout changed")
     if site.read_bytes() == previous:
         site.write_bytes(expected)
-    commit = publication.confirm_git_publication(checkout, expected, previous)
+    commit = reviewed_git_publication(checkout, expected, previous)
     publication.publish_site(expected, record["previous_sha256"], "travel-" + cycle.name.split("-")[1], commit)
     save(folder / "deployed.json", dict(git_commit=commit, snapshot_sha256=record["snapshot_sha256"],
                                        https_verified=True, epoch=time.time()))
+
+
+def reviewed_git_publication(checkout, expected, previous):
+    """Use required GitHub checks and a pull request for snapshot commits."""
+    def command(*args):
+        return subprocess.check_output(list(args), cwd=checkout, timeout=60, stderr=subprocess.PIPE)
+    def git(*args):
+        return command("git", *args)
+    require(git("branch", "--show-current").strip() == b"main", "Publication branch differs")
+    status = git("status", "--porcelain")
+    if status:
+        require(status in {f" M {publication.SNAPSHOT}\n".encode(), f"M  {publication.SNAPSHOT}\n".encode()}
+                and git("show", "HEAD:" + publication.SNAPSHOT) == previous
+                and (checkout / publication.SNAPSHOT).read_bytes() == expected,
+                "Unrelated checkout changes")
+        git("add", "--", publication.SNAPSHOT)
+        git("commit", "-m", "Publish independently reviewed search results")
+    require(not git("status", "--porcelain")
+            and git("show", "HEAD:" + publication.SNAPSHOT) == expected, "Snapshot commit differs")
+    git("fetch", "--quiet", "origin", "main")
+    remote = git("rev-parse", "origin/main").decode().strip()
+    remote_data = git("show", "origin/main:" + publication.SNAPSHOT)
+    if remote_data == expected:
+        # This dedicated checkout contains only the recorded snapshot commit.
+        # Its branch is retained on GitHub after squash merge.
+        if git("rev-parse", "HEAD").decode().strip() != remote:
+            require(git("diff", "--name-only", "HEAD^", "HEAD").decode().splitlines() == [publication.SNAPSHOT],
+                    "Unrelated local commits")
+            git("reset", "--hard", "origin/main")
+        return remote
+    require(remote_data == previous, "Concurrent scientific publication")
+    require(git("diff", "--name-only", "HEAD^", "HEAD").decode().splitlines() == [publication.SNAPSHOT],
+            "Unrelated local commit")
+    branch = "atlas-publication-" + publication.digest(expected)[:16]
+    matches = json.loads(command("gh", "pr", "list", "--state", "all", "--head", branch,
+                                 "--json", "number,state").decode())
+    if not matches:
+        git("push", "origin", "HEAD:refs/heads/" + branch)
+        command("gh", "pr", "create", "--base", "main", "--head", branch,
+                "--title", "Publish independently reviewed search results",
+                "--body", "Update the atlas from signed accepted results and frozen, disjoint-reference accounting. Candidate fields remain uncredited.")
+        raise publication.PublicationRetry("Snapshot pull request is waiting for required checks")
+    require(len(matches) == 1 and matches[0]["state"] == "OPEN", "Snapshot pull request needs reconciliation")
+    number = str(matches[0]["number"])
+    check = subprocess.run(["gh", "pr", "checks", number, "--required", "--json", "name,state"],
+                           cwd=checkout, text=True, capture_output=True, timeout=60)
+    if check.returncode == 8:
+        raise publication.PublicationRetry("Snapshot pull request is waiting for required checks")
+    require(check.returncode == 0, "Required snapshot checks failed or could not be read")
+    checks = json.loads(check.stdout)
+    require(checks and all(c["state"] == "SUCCESS" for c in checks), "Required snapshot checks are not successful")
+    command("gh", "pr", "merge", number, "--squash")
+    git("fetch", "--quiet", "origin", "main")
+    require(git("show", "origin/main:" + publication.SNAPSHOT) == expected, "Merged snapshot differs")
+    git("reset", "--hard", "origin/main")
+    return git("rev-parse", "HEAD").decode().strip()
 
 
 def sync_checkout(checkout, head):
@@ -199,6 +255,16 @@ def sync_checkout(checkout, head):
 
 
 def run(batch):
+    socket_dir = Path("/private/tmp") / f"p9pub-{os.getuid()}"
+    socket_dir.mkdir(mode=0o700, exist_ok=True)
+    require(not socket_dir.is_symlink() and socket_dir.stat().st_uid == os.getuid()
+            and socket_dir.stat().st_mode & 0o077 == 0, "SSH socket directory is not private")
+    transport = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                 "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
+                 "-o", "ControlMaster=auto", "-o", "ControlPersist=120",
+                 "-o", "ControlPath=" + str(socket_dir / "ssh.sock"), "oklo"]
+    science.SSH = transport
+    publication.SSH = transport
     config = read(batch / "config.json")
     require(source_hash() == config["runtime_source"], "Publication environment changed")
     for name, digest in config["source_hashes"].items():
