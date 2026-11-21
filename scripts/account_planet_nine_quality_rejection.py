@@ -53,9 +53,13 @@ def rejection_ledger(previous, task, result, server):
             or result["exclusion_credit"] != 0):
         raise ValueError("Expected only a baseline quality rejection")
     quality = result["quality"]
+    modern = result.get("quality_method") == "usable-pixels-v1"
+    stopped = (quality and quality[-1]["masked_fraction"] == 1) if modern else (
+        quality and .02 < quality[-1]["masked_fraction"] <= 1)
+    passed = lambda r: (0 <= r["masked_fraction"] < 1) if modern else (
+        0 <= r["masked_fraction"] <= .02)
     if (not quality or [r["sector"] for r in quality] != task["sectors"][:len(quality)]
-            or not .02 < quality[-1]["masked_fraction"] <= 1
-            or any(not 0 <= r["masked_fraction"] <= .02 for r in quality[:-1])):
+            or not stopped or not all(passed(r) for r in quality[:-1])):
         raise ValueError("Quality evidence does not establish the released stop condition")
     ids = [int(case["label"].removeprefix("prior ")) for case in task["injections"]]
     blocked = set(previous["accounted_reference_ids"] + previous["retained_unassessed_prior_ids"])
