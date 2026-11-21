@@ -24,6 +24,7 @@ sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "src")]
 import planet_nine_adaptive_cycle as science
 import planet_nine_publication as publication
 from account_planet_nine_quality_rejection import rejection_ledger, verify_tree
+from kbo_tess.trace_consistency import POLICY as FLUX_POLICY, assess_flux_contrast
 from kbo_tess.coordinated_yield_ledger import append_reviewed_field
 from p9search.provenance import source_hash
 from p9search.storage import read_json as read, sha256 as sha, write_json as save
@@ -76,6 +77,19 @@ def make_ledger(previous, task, result, review, server, models):
     outcomes = []
     if result["state"] == "needs_followup":
         ledger, outcomes = science.followup_ledger(previous, task, result, review, server, models)
+        entry = ledger["retained_followup_searches"][-1]
+        archived = {}
+        for trace, candidate in enumerate(result["candidates"], 1):
+            decision = assess_flux_contrast(candidate.get("sectors", []))
+            if decision["disposition"] == "anomaly":
+                archived[str(trace)] = decision
+        if archived:
+            original = entry["candidate_flags"]
+            retained = [trace for trace in original if str(trace) not in archived]
+            entry.update(candidate_flags=retained, historical_candidate_flags=original,
+                         flux_anomalies=archived, anomaly_policy=FLUX_POLICY["version"])
+            ledger["physical_followup_flags"] = len(retained)
+            ledger["unresolved_flags_in_other_fields"] -= len(archived)
     elif result["state"] == "quality_rejected":
         ledger = rejection_ledger(previous, task, result, server)
     else:

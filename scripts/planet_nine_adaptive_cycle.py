@@ -635,8 +635,11 @@ def export(cycle, *, site=None):
         }
     if ledger["science_state"] == "needs_followup":
         count = ledger["physical_followup_flags"]
+        entry = next(e for e in ledger["retained_followup_searches"]
+                     if e["source_search"] == "coordinated task " + ledger["source_task"])
+        archived = entry.get("flux_anomalies", {})
         require(
-            count > 0
+            len(entry["candidate_flags"]) == count and (count > 0 or bool(archived))
             and ledger["added_expected_planets_proxy"] == 0
             and ledger["newly_accounted_reference_ids"] == [],
             "Follow-up field must remain uncredited",
@@ -652,6 +655,15 @@ def export(cycle, *, site=None):
             depth_samples=[],
             injections=[],
         )
+        if archived:
+            field.update(retained_candidate_flags=entry["candidate_flags"],
+                         historical_flag_count=len(entry["historical_candidate_flags"]),
+                         flux_anomaly_traces={k: v["discrepancy"] for k, v in archived.items()},
+                         result=f"{len(archived)} traces archived for inconsistent sector flux. "
+                                f"{count} remain for follow-up.")
+            if not count:
+                field.update(state="calibration_pending",
+                             depth_note="All candidate traces resolved. Recovery calibration pending.")
         snapshot["searched_fields"] += 1
         snapshot["physical_followup_flags"] += count
         require(
