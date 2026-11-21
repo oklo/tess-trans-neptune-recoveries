@@ -26,8 +26,9 @@ hash. A transport failure retries the same result; it does not repeat credit.
 An unexpected change writes `hold.json` for operator review. Do not delete a
 hold until its evidence has been reconciled.
 
-Run this command with a 60-second launchd `StartInterval`, without `KeepAlive`.
-The advisory lock prevents overlapping runs. `STOP` disables work. Health and
+Run with `--watch` under launchd with `KeepAlive` and a 60-second throttle.
+The process sleeps for 60 seconds between checks; it does not keep an agent turn
+open. The advisory lock prevents overlapping runs. `STOP` disables work. Health and
 errors replace small JSON records; no continuous log is required. Completed
 local snapshot copies are removed after checkpointing; GitHub retains those
 versions. Frozen ledgers and signed review evidence remain available locally.
