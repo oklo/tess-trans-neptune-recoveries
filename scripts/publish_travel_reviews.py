@@ -225,8 +225,6 @@ def reviewed_git_publication(checkout, expected, previous):
         command("gh", "pr", "create", "--base", "main", "--head", branch,
                 "--title", "Publish independently reviewed search results",
                 "--body", "Update the atlas from signed accepted results and frozen, disjoint-reference accounting. Candidate fields remain uncredited.")
-        # Snapshot-only pushes are excluded by the repository's workflow paths.
-        command("gh", "workflow", "run", "tests.yml", "--ref", branch)
         raise publication.PublicationRetry("Snapshot pull request is waiting for required checks")
     require(len(matches) == 1 and matches[0]["state"] == "OPEN", "Snapshot pull request needs reconciliation")
     number = str(matches[0]["number"])
@@ -308,11 +306,8 @@ def run(batch):
     save(batch / "status.json", dict(state="idle", checked_epoch=time.time(), last_result_id=head["result_id"]), private=True)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("batch", type=Path)
-    args = parser.parse_args()
-    batch = args.batch.resolve()
+def run_once(batch):
+    batch = batch.resolve()
     require(batch.parent == ROOT / "outputs", "Publication batch must be an operator output directory")
     os.umask(0o077)
     with (batch / "lock").open("a") as lock:
@@ -335,6 +330,22 @@ def main():
         except Exception as error:
             save(batch / "hold.json", dict(state="held", checked_epoch=time.time(), reason=str(error)[:400]), private=True)
             raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("batch", type=Path)
+    parser.add_argument("--watch", action="store_true")
+    args = parser.parse_args()
+    while True:
+        try:
+            run_once(args.batch)
+        except Exception:
+            if not args.watch:
+                raise
+        if not args.watch:
+            return
+        time.sleep(60)
 
 
 if __name__ == "__main__":
