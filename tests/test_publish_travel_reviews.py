@@ -211,3 +211,16 @@ def test_revisited_field_becomes_measured_and_keeps_rejection_history(tmp_path, 
     assert len(field['footprints'])==3
     assert actual['searched_fields']==1
     assert actual['sensitivity_proxy']['value']==ledger['cumulative_expected_planets_proxy']
+
+
+def test_anomaly_keeps_signed_candidate_and_withheld_calibration():
+    args = list(accounting_example())
+    sectors = [dict(sector=i, coverage=1., flux=f, sigma=.1) for i, f in enumerate([5., 4., .3])]
+    args[2].update(state="needs_followup", candidate_count=1, candidates=[dict(sectors=sectors)], injections=[])
+    ledger, outcomes = publisher.make_ledger(*args)
+    entry = ledger["retained_followup_searches"][-1]
+    assert args[2]["candidate_count"] == 1
+    assert entry["candidate_flags"] == [] and entry["historical_candidate_flags"] == [1]
+    assert entry["flux_anomalies"]["1"]["disposition"] == "anomaly"
+    assert ledger["physical_followup_flags"] == 0
+    assert ledger["added_expected_planets_proxy"] == 0 and not any(r["assessed"] for r in outcomes)
