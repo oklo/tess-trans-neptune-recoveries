@@ -111,3 +111,103 @@ def test_snapshot_publication_uses_pull_request_never_pushes_main(tmp_path, monk
     pushes = [c for c in calls if c[:2] == ["git", "push"]]
     assert len(pushes) == 1 and pushes[0][-1].startswith("HEAD:refs/heads/atlas-publication-")
     assert any(c[:3] == ["gh", "pr", "create"] for c in calls)
+
+
+def accounting_example():
+    from datetime import datetime
+    from test_direct_yield_ledger import example
+    previous, ids, models, outcomes, threshold, clocks = example()
+    previous.update(accounted_reference_ids=ids, retained_unassessed_prior_ids=[],
+                    retained_followup_searches=[], unresolved_flags_in_other_fields=0,
+                    expectation_by_validation={"full_replay": previous["cumulative_expected_planets_proxy"]})
+    task = dict(task_id="a" * 64, sectors=[1, 2, 3],
+                injections=[dict(label=f"prior {m['reference_index']}") for m in models])
+    result = dict(state="searched", candidate_count=0, exclusion_credit=0, candidates=[],
+                  control_maximum=threshold, source_sha256="b" * 64,
+                  quality_method="usable-pixels-v1",
+                  quality=[dict(sector=i, masked_fraction=.2) for i in task["sectors"]],
+                  injections=[dict(label=f"prior {r['reference_index']}", assessed=r["assessed"],
+                              recovered=r["recovered"], best_score=r.get("strongest_nearby_score"))
+                              for r in outcomes])
+    review = dict(review_method="consistency", full_replay_verified=False, audit_probability=0,
+                  replay_seconds=0)
+    epoch = lambda k: int(datetime.fromisoformat(clocks[k]).timestamp())
+    server = dict(task=dict(started=epoch("field_start_utc")),
+                  result=dict(submitted=epoch("field_end_utc")), review_time=epoch("review_end_utc"))
+    return previous, task, result, review, server, models
+
+
+def test_partial_calibration_adds_only_demonstrated_recovery():
+    args = accounting_example()
+    ledger, outcomes = publisher.make_ledger(*args)
+    assert ledger["added_expected_planets_proxy"] == pytest.approx(.2 / 21740)
+    assert ledger["direct_calibration"]["unassessed_ids"] == [5]
+    assert outcomes[1]["recovered"] is None
+    assert ledger["review_method"] == "consistency"
+    assert not ledger["full_replay_verified"]
+
+
+def test_candidate_retention_needs_no_automatic_replay():
+    args = list(accounting_example())
+    args[2].update(state="needs_followup", candidate_count=1, candidates=[{}], injections=[])
+    ledger, outcomes = publisher.make_ledger(*args)
+    assert ledger["added_expected_planets_proxy"] == 0
+    assert ledger["retained_unassessed_prior_ids"] == [4, 5]
+    assert ledger["physical_followup_flags"] == 1
+    assert not ledger["full_replay_verified"]
+    assert all(r["recovered"] is None for r in outcomes)
+
+
+def test_revisit_releases_only_that_fields_unassessed_samples():
+    import json
+    previous, task, result, _, _, _ = accounting_example()
+    previous.update(retained_unassessed_prior_ids=[4, 5, 7], quality_rejected_fields=2)
+    old = dict(result, task_id=task['task_id'], state='quality_rejected', injections=[])
+    raw = json.dumps(old)
+    record = dict(task=dict(id=task['task_id'], spec=json.dumps(task)),
+                  result=dict(result=raw, digest=publisher.publication.digest(raw.encode()),
+                              status='accepted', verified=1))
+    revised = publisher.revisit_predecessor(previous, task, record)
+    assert revised['retained_unassessed_prior_ids'] == [7]
+    assert revised['quality_rejected_fields'] == 1
+    assert previous['retained_unassessed_prior_ids'] == [4, 5, 7]
+    assert revised['cumulative_expected_planets_proxy'] == previous['cumulative_expected_planets_proxy']
+    wrong = copy.deepcopy(previous)
+    wrong['accounted_reference_ids'].append(4)
+    with pytest.raises(ValueError, match='overlap'):
+        publisher.revisit_predecessor(wrong, task, record)
+    wrong = copy.deepcopy(previous)
+    wrong['retained_followup_searches'] = [dict(unassessed_prior_ids=[4])]
+    with pytest.raises(ValueError, match='candidate'):
+        publisher.revisit_predecessor(wrong, task, record)
+
+
+def test_revisited_field_becomes_measured_and_keeps_rejection_history(tmp_path, monkeypatch):
+    import account_planet_nine_quality_rejection as rejection
+    args = accounting_example()
+    ledger, outcomes = publisher.make_ledger(*args)
+    task = args[1]
+    ledger.update(sha256={}, center=[100., 20.], source_task=task['task_id'],
+                  revisit=dict(previous_result_id=7, previous_state='preflight_failed',
+                               footprints=[dict(sector=s, ra_dec_deg=[[1, 2]]) for s in task['sectors']]))
+    cycle = tmp_path/'cycle'; (cycle/'ledger').mkdir(parents=True)
+    save(cycle/'ledger/summary.json', ledger)
+    save(cycle/'ledger/outcomes.json', outcomes)
+    save(cycle/'credit-plan.json', dict(field='N1', previous_state='preflight_failed'))
+    snapshot = dict(sensitivity_proxy=dict(value=ledger['previous_cumulative_proxy']),
+                    searched_fields=0, physical_followup_flags=0,
+                    fields=[dict(code='N1', task_id=task['task_id'], state='preflight_failed',
+                                 ra_deg=100., dec_deg=20., planned_sectors=task['sectors'],
+                                 result='Stopped at mask cutoff', footprints=[])])
+    site = tmp_path/'snapshot.json';save(site,snapshot)
+    monkeypatch.setattr(rejection,'verify_tree',lambda *a:None)
+    publisher.science.export(cycle,site=site)
+    actual=publisher.read(cycle/'publication/snapshot.json')
+    field=actual['fields'][0]
+    assert field['state']=='complete'
+    assert field['injections'][1]['recovered'] is None
+    assert field['depth_samples'][0]['tested']==1
+    assert field['search_history'][0]['state']=='preflight_failed'
+    assert len(field['footprints'])==3
+    assert actual['searched_fields']==1
+    assert actual['sensitivity_proxy']['value']==ledger['cumulative_expected_planets_proxy']

@@ -41,6 +41,7 @@ ADMIN = [
 ]
 KEY = ROOT / "outputs/planet_nine_coordinator_deploy_2026_11_05/private/review.key"
 LABELS = {
+    "consistency": "Consistency checked",
     "full_replay": "Independent full replay",
     "trusted_local": "Trusted local run; consistency checked",
     "statistical": "Statistical acceptance; 10% replay audit policy",
@@ -308,9 +309,8 @@ def followup_ledger(previous, task, result, review, server, models):
         and count == len(result["candidates"])
         and result["injections"] == []
         and result["exclusion_credit"] == 0
-        and review["review_method"] == "full_replay"
-        and review["full_replay_verified"] is True,
-        "Candidate retention requires a completed full replay without credit",
+        and review["review_method"] in LABELS,
+        "Candidate retention requires an accepted search without sensitivity credit",
     )
     require(
         previous["state"] == "complete"
@@ -602,12 +602,21 @@ def export(cycle, *, site=None):
     )
     plan = read(cycle / "credit-plan.json")
     require(
-        field["state"] == "queued"
+        field["state"] == plan.get("previous_state", "queued")
+        and field["state"] in ("queued", "preflight_failed")
         and field["code"] == plan["field"]
         and [field["ra_deg"], field["dec_deg"]] == ledger["center"]
         and field["planned_sectors"] == ledger["sectors"],
         "Published field differs",
     )
+    if ledger.get("revisit"):
+        require(field["state"] == "preflight_failed", "Only unsearched fields use this revisit path")
+        field.setdefault("search_history", []).append({
+            "state": field["state"], "result": field["result"],
+            "reviewed_utc": field.get("reviewed_utc"),
+            "result_id": ledger["revisit"]["previous_result_id"],
+        })
+        field["footprints"] = ledger["revisit"]["footprints"]
     outcomes = read(cycle / "ledger/outcomes.json")
     method = LABELS[ledger["review_method"]]
     field.update(
@@ -615,14 +624,21 @@ def export(cycle, *, site=None):
         audit_probability=ledger["audit_probability"],
         reviewed_utc=ledger["field_reviewed_utc"],
         physical_followup_flags=0,
+        quality=ledger["quality"],
     )
+    diagnostics = [r["difficulty"] for r in ledger["quality"] if "difficulty" in r]
+    if diagnostics:
+        field["difficulty"] = {
+            "method": "mean-sector-usable-area-exposure-noise-v1",
+            "score": sum(r["score"] for r in diagnostics) / len(diagnostics),
+            "sectors_measured": len(diagnostics),
+        }
     if ledger["science_state"] == "needs_followup":
         count = ledger["physical_followup_flags"]
         require(
             count > 0
             and ledger["added_expected_planets_proxy"] == 0
-            and ledger["newly_accounted_reference_ids"] == []
-            and ledger["full_replay_verified"] is True,
+            and ledger["newly_accounted_reference_ids"] == [],
             "Follow-up field must remain uncredited",
         )
         field.update(
@@ -630,7 +646,7 @@ def export(cycle, *, site=None):
             sectors=ledger["sectors"],
             candidate_count=count,
             physical_followup_flags=count,
-            result=f"{count} candidate flag(s) awaiting follow-up. Independent full replay completed; no sensitivity credit.",
+            result=f"{count} candidate traces awaiting follow-up. {method}.",
             depth_label="Depth uncalibrated",
             depth_note="Recovery calibration withheld pending candidate follow-up.",
             depth_samples=[],
@@ -669,8 +685,8 @@ def export(cycle, *, site=None):
             group = groups.setdefault(
                 v, {"band": "V", "magnitude": v, "recovered": 0, "tested": 0}
             )
-            group["tested"] += 1
-            group["recovered"] += int(row["recovered"])
+            group["tested"] += int(row["assessed"])
+            group["recovered"] += int(row["recovered"] is True)
         field.update(
             state="complete",
             sectors=ledger["sectors"],
@@ -688,6 +704,7 @@ def export(cycle, *, site=None):
                     "reference_index": r["reference_index"],
                     "V": r["reference_V"],
                     "recovered": r["recovered"],
+                    "assessed": r["assessed"],
                 }
                 for r in outcomes
             ],
@@ -695,7 +712,7 @@ def export(cycle, *, site=None):
         snapshot["searched_fields"] += 1
     snapshot["sensitivity_proxy"].update(
         value=ledger["cumulative_expected_planets_proxy"],
-        validation="Trusted local checks and statistical volunteer audits; candidates receive full review.",
+        validation="Consistency-checked results; candidate traces retained for scientific follow-up.",
         by_validation=ledger["expectation_by_validation"],
     )
     snapshot["field_counts"] = dict(Counter(f["state"] for f in snapshot["fields"]))

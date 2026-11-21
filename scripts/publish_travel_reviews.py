@@ -48,6 +48,30 @@ def reference_models(task, population, previous):
     return models
 
 
+
+def revisit_predecessor(previous, task, record):
+    """Reopen an unsearched trial without changing any measured recovery."""
+    old = json.loads(record["result"]["result"])
+    ids = [int(c["label"].removeprefix("prior ")) for c in task["injections"]]
+    require(record["task"]["id"] == task["task_id"] == old["task_id"]
+            and json.loads(record["task"]["spec"]) == task
+            and record["result"]["status"] == "accepted" and record["result"]["verified"] == 1
+            and publication.digest(record["result"]["result"].encode()) == record["result"]["digest"]
+            and old["state"] == "quality_rejected" and old["injections"] == []
+            and not old.get("candidate_count", 0), "Revisit is not an accepted unsearched field")
+    require(len(ids) == len(set(ids))
+            and set(ids) <= set(previous["retained_unassessed_prior_ids"])
+            and not set(ids) & set(previous["accounted_reference_ids"]),
+            "Revisit would overlap measured trials")
+    candidate_ids = {i for f in previous["retained_followup_searches"] for i in f["unassessed_prior_ids"]}
+    require(not set(ids) & candidate_ids, "Revisit would discard candidate follow-up")
+    revised = copy.deepcopy(previous)
+    revised["retained_unassessed_prior_ids"] = sorted(set(previous["retained_unassessed_prior_ids"]) - set(ids))
+    require(revised.get("quality_rejected_fields", 0) > 0, "Missing rejected-field history")
+    revised["quality_rejected_fields"] -= 1
+    return revised
+
+
 def make_ledger(previous, task, result, review, server, models):
     outcomes = []
     if result["state"] == "needs_followup":
@@ -55,16 +79,15 @@ def make_ledger(previous, task, result, review, server, models):
     elif result["state"] == "quality_rejected":
         ledger = rejection_ledger(previous, task, result, server)
     else:
-        require(result["state"] == "searched" and not result.get("candidate_count", 0)
-                and all(r["assessed"] for r in result["injections"]),
-                "Incomplete calibration requires scientific review")
+        require(result["state"] == "searched" and not result.get("candidate_count", 0),
+                "Unexpected search state")
         for model, row in zip(models, result["injections"], strict=True):
             require(row["label"] == f"prior {model['reference_index']}", "Injection order changed")
-            outcomes.append(dict(model, assessed=True, recovered=row["recovered"],
+            outcomes.append(dict(model, assessed=row["assessed"], recovered=row["recovered"],
                                  control_maximum=result["control_maximum"],
-                                 strongest_nearby_score=row["best_score"],
+                                 strongest_nearby_score=row.get("best_score"),
                                  all_nearby_alternatives_scored=True,
-                                 native_responses_passed=True, baseline_above_control=False))
+                                 native_responses_passed=row["assessed"], baseline_above_control=False))
         utc = lambda t: datetime.fromtimestamp(t, UTC).isoformat()
         ledger = append_reviewed_field(previous, previous["accounted_reference_ids"],
             models, outcomes, result["control_maximum"],
@@ -79,7 +102,8 @@ def make_ledger(previous, task, result, review, server, models):
     method = review["review_method"]
     breakdown[method] = breakdown.get(method, 0.) + ledger["added_expected_planets_proxy"]
     ledger.update(source_task=task["task_id"], sectors=task["sectors"], science_state=result["state"],
-        quality=result["quality"], source_sha256=result["source_sha256"],
+        quality=result["quality"], quality_method=result.get("quality_method", "area-limit-v1"),
+        source_sha256=result["source_sha256"],
         full_replay_verified=review["full_replay_verified"], review_method=method,
         audit_probability=review["audit_probability"], replay_seconds=review["replay_seconds"],
         public_coordinator_submission_remains_unverified=False, expectation_by_validation=breakdown)
@@ -105,15 +129,20 @@ def prepare(cycle, config, head, evidence):
     task, submission = read(evidence / "task.json"), read(evidence / "submission.json")
     require(submission["result_id"] == int(cycle.name.split("-")[1]), "Result identity differs")
     cycle.mkdir(exist_ok=True)
+    revisit_path = Path(config.get("revisits", "/nonexistent")) / (task["task_id"] + ".json")
+    revisit = read(revisit_path) if revisit_path.is_file() else None
     plan_path = cycle / "credit-plan.json"
     if not plan_path.exists():
         snapshot = read(Path(config["checkout"]) / publication.SNAPSHOT)
         matches = [f for f in snapshot["fields"] if f.get("task_id") == task["task_id"]]
-        require(len(matches) == 1 and matches[0]["state"] == "queued", "Field is not pending in atlas")
+        require(len(matches) == 1 and (matches[0]["state"] == "queued" or
+                (matches[0]["state"] == "preflight_failed" and revisit)), "Field is not pending or eligible for revisit")
         field = matches[0]
         require(field["planned_sectors"] == task["sectors"], "Planned sectors differ")
         save(plan_path, dict(previous_ledger=head["ledger"], previous_ledger_sha256=head["ledger_sha256"],
-                            field=field["code"], center=[field["ra_deg"], field["dec_deg"]]))
+                            field=field["code"], center=[field["ra_deg"], field["dec_deg"]],
+                            previous_state=field["state"],
+                            revisit_sha256=sha(revisit_path) if revisit else None))
     plan = read(plan_path)
     require(plan["previous_ledger"] == head["ledger"]
             and plan["previous_ledger_sha256"] == head["ledger_sha256"], "Checkpoint predecessor differs")
@@ -123,7 +152,7 @@ def prepare(cycle, config, head, evidence):
     save(cycle / "operator-config.json", dict(batch=str(cycle.parent), worker_id=submission["worker_id"],
         source_sha256=config["runtime_source"], approved_source_sha256=config["approved_sources"]))
     _, task, result, review, receipt, result_path = science.reviewed(cycle)
-    require(review["review_method"] in ("full_replay", "statistical"), "Unexpected participant review method")
+    require(review["review_method"] in science.LABELS, "Unexpected participant review method")
     stored_acceptance(submission["result_id"], read(receipt), submission)
     server = science.inspect_server(task["task_id"])
     require(server["audit_holds"] == 0 and server["task"]["state"] == "reviewed"
@@ -140,13 +169,22 @@ def prepare(cycle, config, head, evidence):
         population = {int(r["index"]): r for r in rows}
         require(len(population) == len(rows), "Duplicate catalog IDs")
         previous = read(previous_path / "summary.json")
+        if revisit:
+            require(sha(revisit_path) == plan["revisit_sha256"], "Revisit evidence changed")
+            previous = revisit_predecessor(previous, task, revisit)
         models = reference_models(task, population, previous)
         ledger, outcomes = make_ledger(previous, task, result, review, server, models)
         ledger["center"] = plan["center"]
+        if revisit:
+            ledger["revisit"] = {"previous_result_id": revisit["result"]["id"],
+                                 "previous_state": plan["previous_state"],
+                                 "footprints": revisit["footprints"]}
         save(cycle / "accepted-review.json", {"server": server, "receipt_sha256": sha(receipt)})
         inputs = [receipt, result_path, catalog, plan_path, previous_path / "summary.json",
                   previous_path / "result_freeze.json", cycle / "task.json", cycle / "submission.json",
                   cycle / "accepted-review.json", evidence / "plan.json"]
+        if revisit:
+            inputs.append(revisit_path)
         # Freeze code alongside each small ledger, so future code releases do not invalidate history.
         with tempfile.TemporaryDirectory(prefix=".ledger-", dir=cycle) as temporary:
             stage = Path(temporary) / "ledger"
