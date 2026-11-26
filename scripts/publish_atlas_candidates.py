@@ -131,6 +131,9 @@ def main():
             if record.get("digest") != digest:
                 values = json.loads(subprocess.check_output([model["python"], str(helper), str(plan)], timeout=120))
                 record = {"digest": digest, "rows": values}
+            record["task_id"] = f.get("task_id")
+            record["reviewed_paths"] = sorted(ids)
+            record["public_paths"] = []
             orbits[code] = record
         for trace in ids:
             path = DEST/f"{code}-{trace}.png"
@@ -143,6 +146,32 @@ def main():
             files = [base/"measurements"/f"{code}-{trace}-{s}.npz" for s in sorted(row["sectors"], key=int)]
             rebuilt = ROOT/"planet_nine_candidate_context"/code/"measurements"
             files = [rebuilt/f.name if (rebuilt/f.name).is_file() else f for f in files]
+            receipt = base / f"trace-{trace}.json"
+            if receipt.is_file():
+                review = json.loads(receipt.read_text())
+                radius = record["rows"].get(str(trace), {}).get("radius")
+                current = (review.get("public_candidate") is True
+                           and review.get("assessment") == "worth follow-up"
+                           and review.get("task_id") == f.get("task_id")
+                           and review.get("reviewed_paths") == sorted(ids)
+                           and review.get("trace") == trace
+                           and radius is not None and 0 < radius <= 17.15 / 3)
+                held = ROOT / "planet_nine_backlog_service" / "measurements"
+                evidence = {x.get("measurement_sha256") for x in review.get("independent_sectors", [])}
+                if current and all(hashlib.sha256(p.read_bytes()).hexdigest() in evidence
+                                   for p in held.glob(f"holdout-{code}-{trace}-s*.json")):
+                    complete = True
+                    for file in files:
+                        if not file.is_file():
+                            complete = False
+                            break
+                        with np.load(file) as pixels:
+                            complete &= {"field_image", "field_residual", "path"} <= set(pixels.files)
+                    shared = review.get("shared_paths")
+                    representative = (isinstance(shared, list) and set(shared) <= set(ids)
+                                      and trace == min([trace, *shared]))
+                    if complete and representative:
+                        record["public_paths"].append(trace)
             newest = max(p.stat().st_mtime for p in [Path(__file__), plan, *files] if p.exists())
             if not path.exists() or path.stat().st_mtime < newest:
                 render(path, code, row, files)
