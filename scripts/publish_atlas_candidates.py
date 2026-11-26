@@ -81,9 +81,17 @@ def render(path, code, row, files):
                         crosshair(ax, (weight.shape[1]-1)/2, (weight.shape[0]-1)/2)
     ax = fig.add_subplot(gs[-1, :])
     series = [row["sectors"][k] for k in sectors]
+    flux = np.array([s["flux"] for s in series], dtype=float)
+    sigma = np.array([s["sigma"] for s in series], dtype=float)
+    valid = np.isfinite(flux) & np.isfinite(sigma) & (sigma > 0)
     ax.axhline(0, color="0.65", lw=.8)
-    ax.errorbar(range(n), [s["flux"] for s in series], yerr=[s["sigma"] for s in series],
-                fmt="o", color="#225f83", capsize=4)
+    if valid.any():
+        expected = np.average(flux[valid], weights=1 / sigma[valid]**2)
+        ax.axhline(expected, color="#99591c", linestyle="--", lw=1.4,
+                   label=f"Constant-flux fit ({expected:.2f} e⁻/s)")
+        ax.legend(loc="lower left", bbox_to_anchor=(0, 1), frameon=False,
+                  borderaxespad=0, fontsize=9)
+    ax.errorbar(range(n), flux, yerr=sigma, fmt="o", color="#225f83", capsize=4)
     ax.set_xlim(-.5, n-.5)
     ax.set_xticks(range(n), [f"Sector {k}" for k in sectors])
     ax.set_ylabel("Flux (electrons/s)")
