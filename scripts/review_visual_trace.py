@@ -29,6 +29,18 @@ target trace; any later images show nearby alternative orbits in the same field.
 can have negative lobes. For a weak sector, check coverage and predicted S/N at the
 reference sector's brightness before interpreting the missing signal. These are formal
 uncertainties and the source may vary. Describe the image evidence separately.
+Assess whether alternative paths pick up the same light in the sectors that support
+a detection. Compare their detector separations, the measured cores, and the point-source
+widths. Distinguish shared, distinct, and uncertain image evidence. Paths that separate
+only in a sector with no signal do not supply independent positive evidence.
+Name the relevant path numbers and sectors in your observation.
+For public display, ask whether a reader could reasonably interpret this as a distinct
+moving point source after seeing the full evidence. Set public_candidate true only
+for a physically plausible, centered source repeating along one path across sectors,
+with consistent flux given the local noise, complete comparison images, and no
+unexplained sensitive dropout or convincing stellar residual. Mark ambiguous cases
+false. List alternative path numbers drawing on the same positive images in
+shared_paths. When independence is unclear, keep public_candidate false.
 Use the nearby point-source comparisons and sector S/N as context, not probability.
 Report likely artifact only for a concrete image-based explanation. Otherwise distinguish
 inconclusive from worth follow-up. Give the sector evidence briefly. No tools are needed.
@@ -41,8 +53,10 @@ SCHEMA = {
             "enum": ["likely artifact", "inconclusive", "worth follow-up"],
         },
         "observation": {"type": "string"},
+        "public_candidate": {"type": "boolean"},
+        "shared_paths": {"type": "array", "items": {"type": "integer"}},
     },
-    "required": ["assessment", "observation"],
+    "required": ["assessment", "observation", "public_candidate", "shared_paths"],
     "additionalProperties": False,
 }
 
@@ -254,6 +268,14 @@ def review(report_dir, code, flags, trace, receipt):
             )
     repeat = assess_repeat_support(report["candidates"][trace - 1]["sectors"])
     checks = independent_checks(tid, code, trace, pars)
+    overlap = []
+    if len(flags) > 1:
+        comparison = subprocess.check_output(
+            [python, str(Path(__file__).with_name("candidate_path_overlap.py")),
+             str(folder / "plans" / f"{code}.json"), *map(str, flags)],
+            text=True, timeout=120,
+        )
+        overlap = [pair for pair in json.loads(comparison) if trace in pair["paths"]]
     result = inspect_image(
         image,
         dict(
@@ -262,12 +284,15 @@ def review(report_dir, code, flags, trace, receipt):
             sectors=context,
             repeat_support=repeat,
             alternate_traces=others,
+            detector_overlap=overlap,
             strip_photometry=strip,
             independent_sectors=checks,
             columns="r = centered shape correlation; lower_or_equal = nearby point sources scoring no higher",
         ),
         neighbors,
     )
+    result["reviewed_paths"] = sorted(flags)
+    result["detector_overlap"] = overlap
     result["neighbor_images"] = {img.name: sha256(img) for img in neighbors}
     result["repeat_support"] = repeat
     result["independent_sectors"] = checks
