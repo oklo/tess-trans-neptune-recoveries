@@ -114,6 +114,8 @@ def main():
     previous = json.loads(orbit_file.read_text()) if orbit_file.exists() else {}
     orbits = {}
     helper = Path(__file__).with_name("atlas_trial_orbits.py")
+    decisions_file = DEST / "operator-display-review.json"
+    display_reviews = json.loads(decisions_file.read_text()) if decisions_file.exists() else {}
     keep = set()
     for f in snapshot["fields"]:
         code = f["code"]
@@ -158,6 +160,12 @@ def main():
                            and radius is not None and 0 < radius <= 17.15 / 3)
                 held = ROOT / "planet_nine_backlog_service" / "measurements"
                 evidence = {x.get("measurement_sha256") for x in review.get("independent_sectors", [])}
+                decision = display_reviews.get(f"{code}-{trace}")
+                if decision and decision.get("display") is False and decision["task_id"] == f.get("task_id"):
+                    inputs = [*files, *sorted(held.glob(f"holdout-{code}-{trace}-s*.json"))]
+                    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs if p.is_file()}
+                    if hashes == decision["evidence"]:
+                        current = False
                 if current and all(hashlib.sha256(p.read_bytes()).hexdigest() in evidence
                                    for p in held.glob(f"holdout-{code}-{trace}-s*.json")):
                     complete = True
